@@ -27,7 +27,9 @@
     "allowJs": true,
     "noEmit": false,
     "esModuleInterop": true,
-    "resolveJsonModule": true
+    "resolveJsonModule": true,
+    "strict": false,
+    "noImplicitAny": false
   },
   "include": [
     "./src/**/*",
