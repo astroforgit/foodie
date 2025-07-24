@@ -46,6 +46,10 @@ router.post(
                     username: req.user.username,
                     profilePicture: req.user.profilePicture
                 };
+
+                // Populate NewsFeed table for PostgreSQL
+                console.log('📰 POST DEBUG - Populating NewsFeed for PostgreSQL');
+                await services.newsfeed.populateNewsFeed(post.id, userId);
             } else {
                 post = new Post({
                     _author_id: req.user._id,
@@ -170,34 +174,58 @@ router.post(
             const { post_id } = req.params;
             const userId = config.db.type === 'postgres' ? req.user['id'] : req.user['_id'];
 
+            console.log('🔍 LIKE DEBUG - Starting like process');
+            console.log('📝 LIKE DEBUG - post_id:', post_id, 'type:', typeof post_id);
+            console.log('👤 LIKE DEBUG - userId:', userId, 'type:', typeof userId);
+            console.log('🗄️ LIKE DEBUG - database type:', config.db.type);
+
             // Check if post exists using service layer
             let post;
             if (config.db.type === 'postgres') {
+                console.log('🔍 LIKE DEBUG - Fetching post with PostgreSQL service');
                 const posts = await services.post.getPosts(req.user, { _id: post_id });
                 post = posts[0];
+                console.log('📄 LIKE DEBUG - Post found:', !!post, post ? `ID: ${post.id}` : 'No post');
             } else {
+                console.log('🔍 LIKE DEBUG - Fetching post with MongoDB');
                 post = await Post.findById(post_id);
+                console.log('📄 LIKE DEBUG - Post found:', !!post);
             }
 
-            if (!post) return next(new ErrorHandler(400, 'Post not found.'));
+            if (!post) {
+                console.log('❌ LIKE DEBUG - Post not found, returning 400');
+                return next(new ErrorHandler(400, 'Post not found.'));
+            }
 
             let state = false; // the state whether isLiked = true | false to be sent back to user
 
             if (config.db.type === 'postgres') {
+                console.log('🔍 LIKE DEBUG - Using PostgreSQL service layer');
+
                 // Use PostgreSQL service layer
+                console.log('🔍 LIKE DEBUG - Checking if already liked...');
                 const isLiked = await services.like.checkLike(userId, post_id, 'Post');
+                console.log('❤️ LIKE DEBUG - Already liked:', isLiked);
 
                 if (!isLiked) {
+                    console.log('➕ LIKE DEBUG - Creating new like...');
                     await services.like.createLike(userId, post_id, 'Post');
                     state = true;
+                    console.log('✅ LIKE DEBUG - Like created successfully');
 
                     // TODO: Add notification logic for PostgreSQL
                 } else {
+                    console.log('➖ LIKE DEBUG - Removing existing like...');
                     await services.like.deleteLike(userId, post_id, 'Post');
                     state = false;
+                    console.log('✅ LIKE DEBUG - Like removed successfully');
                 }
 
+                console.log('🔢 LIKE DEBUG - Getting likes count...');
                 const likesCount = await services.like.getLikesCount(post_id, 'Post');
+                console.log('📊 LIKE DEBUG - Likes count:', likesCount);
+                console.log('🎯 LIKE DEBUG - Final state:', state);
+
                 res.status(200).send(makeResponseJson({ state, likesCount }));
             } else {
                 // Use MongoDB operations

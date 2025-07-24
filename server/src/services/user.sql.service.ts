@@ -8,11 +8,12 @@ export const getUserById = async (userId: string): Promise<any> => {
                 id,
                 email,
                 username,
-                profile_picture as "profilePicture",
-                created_at as "createdAt",
-                updated_at as "updatedAt"
+                firstname,
+                lastname,
+                "createdAt",
+                "updatedAt"
             FROM
-                users
+                "Users"
             WHERE
                 id = :userId
         `, {
@@ -33,11 +34,12 @@ export const getUserByUsername = async (username: string): Promise<any> => {
                 id,
                 email,
                 username,
-                profile_picture as "profilePicture",
-                created_at as "createdAt",
-                updated_at as "updatedAt"
+                firstname,
+                lastname,
+                "createdAt",
+                "updatedAt"
             FROM
-                users
+                "Users"
             WHERE
                 username = :username
         `, {
@@ -53,14 +55,15 @@ export const getUserByUsername = async (username: string): Promise<any> => {
 
 export const searchUsers = async (searchTerm: string, limit: number = 10): Promise<any[]> => {
     try {
-        const [users] = await sequelize.query(`
+        const users = await sequelize.query(`
             SELECT
                 id,
                 email,
                 username,
-                profile_picture as "profilePicture"
+                firstname,
+                lastname
             FROM
-                users
+                "Users"
             WHERE
                 username ILIKE :searchTerm OR email ILIKE :searchTerm
             LIMIT :limit
@@ -79,20 +82,22 @@ export const updateUser = async (userId: string, updates: any): Promise<any> => 
     try {
         const {
             username,
-            profilePicture
+            firstname,
+            lastname
         } = updates;
 
-        const [user] = await sequelize.query(`
-            UPDATE users
+        const user = await sequelize.query(`
+            UPDATE "Users"
             SET
                 username = :username,
-                profile_picture = :profilePicture,
-                updated_at = NOW()
+                firstname = :firstname,
+                lastname = :lastname,
+                "updatedAt" = NOW()
             WHERE
                 id = :userId
             RETURNING *
         `, {
-            replacements: { userId, username, profilePicture },
+            replacements: { userId, username, firstname, lastname },
             type: QueryTypes.UPDATE
         });
 

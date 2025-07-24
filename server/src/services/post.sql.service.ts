@@ -15,7 +15,14 @@ const buildPaginateOptions = (opts: Partial<IPaginate>) => {
     if (opts.sort) {
         const sortKey = Object.keys(opts.sort)[0];
         const sortOrder = opts.sort[sortKey] === 1 ? 'ASC' : 'DESC';
-        orderBy = `ORDER BY ${sortKey} ${sortOrder}`;
+        // Map MongoDB field names to PostgreSQL column names
+        const columnMap: { [key: string]: string } = {
+            'createdAt': 'p."createdAt"',
+            'updatedAt': 'p."updatedAt"',
+            '_id': 'p.id'
+        };
+        const pgColumn = columnMap[sortKey] || `p."${sortKey}"`;
+        orderBy = `ORDER BY ${pgColumn} ${sortOrder}`;
     }
 
     let pagination = '';
@@ -31,27 +38,45 @@ const buildPaginateOptions = (opts: Partial<IPaginate>) => {
 
 export const getPosts = async (user: IUser | null, query: any, paginate?: Partial<IPaginate>): Promise<any[]> => {
     try {
+        console.log('📄 POST SQL DEBUG - getPosts called');
+        console.log('👤 POST SQL DEBUG - user:', user ? `ID: ${user['_id'] || user['id']}` : 'null');
+        console.log('🔍 POST SQL DEBUG - query:', query);
+
         let whereClause = 'WHERE 1=1';
         const userId = user?.['_id'] || user?.['id'];
         const replacements: any = {};
 
         if (userId) {
             replacements.userId = userId;
+            console.log('👤 POST SQL DEBUG - userId set:', userId);
         }
 
         if (query.author) {
             whereClause += ' AND p."_author_id" = :authorId';
             replacements.authorId = query.author;
+            console.log('👤 POST SQL DEBUG - author filter:', query.author);
         }
 
         if (query._id) {
+            const postIdInt = parseInt(query._id);
             whereClause += ' AND p.id = :postId';
-            replacements.postId = parseInt(query._id);
+            replacements.postId = postIdInt;
+            console.log('🆔 POST SQL DEBUG - post ID filter:', query._id, '→', postIdInt);
+        }
+
+        if (query.privacy) {
+            whereClause += ' AND p.privacy = :privacy';
+            replacements.privacy = query.privacy;
+            console.log('🔒 POST SQL DEBUG - privacy filter:', query.privacy);
         }
 
         if (query.isSaved && userId) {
             whereClause += ' AND EXISTS(SELECT 1 FROM "Bookmarks" b WHERE b.post_id = p.id AND b.user_id = :userId)';
+            console.log('🔖 POST SQL DEBUG - saved posts filter added');
         }
+
+        console.log('🔍 POST SQL DEBUG - Final WHERE clause:', whereClause);
+        console.log('🔍 POST SQL DEBUG - Final replacements:', replacements);
 
         const posts = await sequelize.query(`
             SELECT
@@ -85,9 +110,14 @@ export const getPosts = async (user: IUser | null, query: any, paginate?: Partia
             type: QueryTypes.SELECT
         });
 
+        console.log('📊 POST SQL DEBUG - Query executed, found', posts.length, 'posts');
+        if (posts.length > 0) {
+            console.log('📄 POST SQL DEBUG - First post:', { id: (posts[0] as any).id, description: (posts[0] as any).description?.substring(0, 50) });
+        }
+
         return posts as any[];
     } catch (error) {
-        console.error("Error fetching posts:", error);
+        console.error("❌ POST SQL DEBUG - Error fetching posts:", error);
         throw error;
     }
 };

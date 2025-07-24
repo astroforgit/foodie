@@ -8,6 +8,9 @@ import Notification from './Notification';
 import Message from './Message';
 import Like from './Like';
 import Comment from './Comment';
+import NewsFeed from './NewsFeed';
+import Bookmark from './Bookmark';
+import Chat from './Chat';
 
 const models = {
   User,
@@ -17,6 +20,9 @@ const models = {
   Message,
   Like,
   Comment,
+  NewsFeed,
+  Bookmark,
+  Chat,
 };
 
 export default {

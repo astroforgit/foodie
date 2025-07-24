@@ -17,12 +17,21 @@ async function connectPostgres() {
         await import('@/models/Message');
         await import('@/models/Like');
         await import('@/models/Comment');
+        await import('@/models/NewsFeed');
+        await import('@/models/Bookmark');
+        await import('@/models/Chat');
         console.log('Models loaded');
 
         // Sync database only if DATABASE_SYNC is enabled
         if (config.db.sync) {
             await sequelize.sync({ alter: true });
             console.log('Database synchronized');
+
+            // Populate NewsFeed for existing posts
+            console.log('Populating NewsFeed for existing posts...');
+            const { populateNewsFeedForExistingPosts } = await import('@/services/newsfeed.sql.service');
+            await populateNewsFeedForExistingPosts();
+            console.log('NewsFeed population completed');
         } else {
             console.log('Database sync skipped (DATABASE_SYNC=false)');
         }
