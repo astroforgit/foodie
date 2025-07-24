@@ -1,6 +1,6 @@
 //@ts-ignore
 import { makeResponseJson, sessionizeUser } from '@/helpers/utils';
-import { ErrorHandler } from '@/middlewares/error.middleware';
+import { ErrorHandler, isAuthenticated } from '@/middlewares';
 import { IUser } from '@/schemas/UserSchema';
 import { schemas, validateBody } from '@/validations/validations';
 import { NextFunction, Request, Response, Router } from 'express';
@@ -54,7 +54,7 @@ router.post(
                     }
 
                     const userData = sessionizeUser(user);
-                    return res.status(200).send(makeResponseJson({ auth: userData, user: (req.user as IUser).toUserJSON() }));
+                    return res.status(200).send(makeResponseJson({ auth: userData, user: user.toUserJSON() }));
                 });
             }
         })(req, res, next);
@@ -122,11 +122,20 @@ router.delete('/v1/logout', (req, res, next) => {
 router.get('/v1/check-session', (req, res, next) => {
     if (req.isAuthenticated()) {
         const user = sessionizeUser(req.user);
-        res.status(200).send(makeResponseJson({ auth: user, user: (req.user as IUser).toUserJSON() }));
+        res.status(200).send(makeResponseJson({ auth: user, user: (req.user as any).toUserJSON() }));
     } else {
         next(new ErrorHandler(404, 'Session invalid/expired.'));
     }
 });
 
+//@route GET /api/v1/check-session
+router.get('/v1/check-session', isAuthenticated, (req: Request, res: Response) => {
+    if (req.user) {
+        const userData = sessionizeUser(req.user);
+        res.status(200).send(makeResponseJson({ user: userData, isAuthenticated: true }));
+    } else {
+        res.status(401).send(makeResponseJson({ isAuthenticated: false }));
+    }
+});
 
 export default router;

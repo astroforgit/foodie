@@ -6,48 +6,51 @@ export const getNewsFeed = async (user: IUser | null, query: any, skip: number, 
     if (!user) return [];
 
     try {
-        const [followingResult] = await sequelize.query(`
-            SELECT target_id FROM follows WHERE user_id = :userId
+        // Handle both MongoDB (_id) and PostgreSQL (id) user IDs
+        const userId = user['_id'] || user['id'];
+
+        const followingResult = await sequelize.query(`
+            SELECT following FROM "Follows" WHERE follower = :userId
         `, {
-            replacements: { userId: user._id },
+            replacements: { userId },
             type: QueryTypes.SELECT
         });
-        const followingIds = (followingResult as { target_id: string }[]).map((row: { target_id: string; }) => row.target_id);
+        const followingIds = (followingResult as { following: string }[]).map((row: { following: string; }) => row.following);
 
         if (followingIds.length === 0) {
             return [];
         }
 
-        const [posts] = await sequelize.query(`
+        // Build the query with direct array interpolation to avoid parameter issues
+        const followingIdsStr = followingIds.map(id => `'${id}'`).join(',');
+
+        const posts = await sequelize.query(`
             SELECT
                 p.id,
                 p.privacy,
-                p.photos,
                 p.description,
-                p.is_edited as "isEdited",
-                p.created_at as "createdAt",
-                p.updated_at as "updatedAt",
+                p."isEdited",
+                p."createdAt",
+                p."updatedAt",
                 json_build_object(
                     'id', u.id,
                     'email', u.email,
-                    'profilePicture', u.profile_picture,
-                    'username', u.username
-                ) as author,
-                (SELECT COUNT(*) FROM likes WHERE post_id = p.id) as "likesCount",
-                (SELECT COUNT(*) FROM comments WHERE post_id = p.id) as "commentsCount",
-                EXISTS(SELECT 1 FROM likes WHERE post_id = p.id AND user_id = :userId) as "isLiked"
+                    'username', u.username,
+                    'firstname', u.firstname,
+                    'lastname', u.lastname
+                ) as author
             FROM
-                posts p
+                "Posts" p
             JOIN
-                users u ON p.author_id = u.id
+                "Users" u ON p."_author_id" = u.id
             WHERE
-                p.author_id = ANY(:followingIds::uuid[]) AND (p.privacy = 'public' OR p.author_id = :userId)
+                p."_author_id" IN (${followingIdsStr}) AND p.privacy = 'public'
             ORDER BY
-                p.created_at DESC
+                p."createdAt" DESC
             OFFSET :skip
             LIMIT :limit
         `, {
-            replacements: { followingIds: followingIds, skip: skip, limit: limit, userId: user._id },
+            replacements: { skip: skip, limit: limit },
             type: QueryTypes.SELECT
         });
 

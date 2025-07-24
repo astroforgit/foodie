@@ -11,8 +11,27 @@ Post.init({
         autoIncrement: true,
         primaryKey: true
     },
+    _author_id: {
+        type: DataTypes.INTEGER,
+        allowNull: false,
+        references: {
+            model: User,
+            key: 'id'
+        }
+    },
     description: {
-        type: DataTypes.STRING
+        type: DataTypes.TEXT
+    },
+    photos: {
+        type: DataTypes.JSON,
+        defaultValue: []
+    },
+    privacy: {
+        type: DataTypes.STRING,
+        defaultValue: 'public',
+        validate: {
+            isIn: [['public', 'private', 'follower']]
+        }
     },
     isEdited: {
         type: DataTypes.BOOLEAN,

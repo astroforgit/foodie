@@ -3,7 +3,24 @@ import { DataTypes, Model } from 'sequelize';
 import sequelize from '@/db/sql/sequelize';
 import { Follow } from './Follow';
 
-class User extends Model {}
+class User extends Model {
+    // Add methods to make it compatible with existing code
+    toUserJSON() {
+        return {
+            id: this.getDataValue('id'),
+            email: this.getDataValue('email'),
+            username: this.getDataValue('username'),
+            firstname: this.getDataValue('firstname'),
+            lastname: this.getDataValue('lastname'),
+            createdAt: this.getDataValue('createdAt'),
+            updatedAt: this.getDataValue('updatedAt')
+        };
+    }
+
+    toProfileJSON() {
+        return this.toUserJSON();
+    }
+}
 
 User.init({
     id: {

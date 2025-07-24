@@ -32,41 +32,52 @@ const buildPaginateOptions = (opts: Partial<IPaginate>) => {
 export const getPosts = async (user: IUser | null, query: any, paginate?: Partial<IPaginate>): Promise<any[]> => {
     try {
         let whereClause = 'WHERE 1=1';
-        const replacements: any = { userId: user?._id };
+        const userId = user?.['_id'] || user?.['id'];
+        const replacements: any = {};
+
+        if (userId) {
+            replacements.userId = userId;
+        }
 
         if (query.author) {
-            whereClause += ' AND p.author_id = :authorId';
+            whereClause += ' AND p."_author_id" = :authorId';
             replacements.authorId = query.author;
         }
-        
-        if (query.isSaved) {
-            whereClause += ' AND EXISTS(SELECT 1 FROM bookmarks b WHERE b.post_id = p.id AND b.user_id = :userId)';
+
+        if (query._id) {
+            whereClause += ' AND p.id = :postId';
+            replacements.postId = parseInt(query._id);
         }
 
-        const [posts] = await sequelize.query(`
+        if (query.isSaved && userId) {
+            whereClause += ' AND EXISTS(SELECT 1 FROM "Bookmarks" b WHERE b.post_id = p.id AND b.user_id = :userId)';
+        }
+
+        const posts = await sequelize.query(`
             SELECT
                 p.id,
                 p.privacy,
                 p.photos,
                 p.description,
-                p.is_edited as "isEdited",
-                p.created_at as "createdAt",
-                p.updated_at as "updatedAt",
+                p."isEdited",
+                p."createdAt",
+                p."updatedAt",
                 json_build_object(
                     'id', u.id,
                     'email', u.email,
-                    'profilePicture', u.profile_picture,
-                    'username', u.username
+                    'username', u.username,
+                    'firstname', u.firstname,
+                    'lastname', u.lastname
                 ) as author,
-                EXISTS(SELECT 1 FROM likes l WHERE l.post_id = p.id AND l.user_id = :userId) as "isLiked",
-                (p.author_id = :userId) as "isOwnPost",
-                EXISTS(SELECT 1 FROM bookmarks b WHERE b.post_id = p.id AND b.user_id = :userId) as "isBookmarked",
-                (SELECT COUNT(*) FROM comments c WHERE c.post_id = p.id) as "commentsCount",
-                (SELECT COUNT(*) FROM likes l WHERE l.post_id = p.id) as "likesCount"
+                ${userId ? `EXISTS(SELECT 1 FROM "Likes" l WHERE l.target = p.id AND l."user" = :userId AND l.type = 'Post')` : 'false'} as "isLiked",
+                ${userId ? `(p."_author_id" = :userId)` : 'false'} as "isOwnPost",
+                ${userId ? `EXISTS(SELECT 1 FROM "Bookmarks" b WHERE b.post_id = p.id AND b.user_id = :userId)` : 'false'} as "isBookmarked",
+                COALESCE((SELECT COUNT(*) FROM "Comments" c WHERE c."_post_id" = p.id), 0) as "commentsCount",
+                COALESCE((SELECT COUNT(*) FROM "Likes" l WHERE l.target = p.id AND l.type = 'Post'), 0) as "likesCount"
             FROM
-                posts p
+                "Posts" p
             JOIN
-                users u ON p.author_id = u.id
+                "Users" u ON p."_author_id" = u.id
             ${whereClause}
             ${buildPaginateOptions(paginate || {})}
         `, {
@@ -125,11 +136,11 @@ export const createPost = async (authorId: string, data: any): Promise<any> => {
     try {
         const { description, photos, privacy } = data;
         const [post] = await sequelize.query(`
-            INSERT INTO posts (author_id, description, photos, privacy)
-            VALUES (:authorId, :description, :photos, :privacy)
+            INSERT INTO "Posts" ("_author_id", description, photos, privacy, "createdAt", "updatedAt")
+            VALUES (:authorId, :description, :photos, :privacy, NOW(), NOW())
             RETURNING *
         `, {
-            replacements: { authorId, description, photos, privacy },
+            replacements: { authorId, description, photos: JSON.stringify(photos), privacy },
             type: QueryTypes.INSERT
         });
 

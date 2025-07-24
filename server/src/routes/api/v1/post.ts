@@ -5,6 +5,7 @@ import { Bookmark, Comment, Follow, Like, NewsFeed, Notification, Post, User } f
 import { ENotificationType } from '@/schemas/NotificationSchema';
 import { EPrivacy } from '@/schemas/PostSchema';
 import services from '@/services';
+import config from '@/config/config';
 import { deleteImageFromStorage, multer, uploadImageToStorage } from '@/storage/cloudinary';
 import { schemas, validateBody } from '@/validations/validations';
 import { NextFunction, Request, Response, Router } from 'express';
@@ -29,57 +30,82 @@ router.post(
                 console.log(photos)
             }
 
-            const post = new Post({
-                _author_id: req.user._id,
-                // author: req.user._id,
+            const userId = config.db.type === 'postgres' ? req.user['id'] : req.user['_id'];
+            const postData = {
                 description: filterWords.clean(description),
                 photos,
-                privacy: privacy || 'public',
-                createdAt: Date.now()
-            });
+                privacy: privacy || 'public'
+            };
 
-            await post.save();
-            await post
-                .populate({
-                    path: 'author',
-                    select: 'profilePicture username fullname'
-                })
-                .execPopulate();
-
-
-            const myFollowersDoc = await Follow.find({ target: req.user._id }); // target is yourself
-            const myFollowers = myFollowersDoc.map(user => user.user); // so user property must be used 
-
-            const newsFeeds = myFollowers
-                .map(follower => ({ // add post to follower's newsfeed
-                    follower: Types.ObjectId(follower._id),
-                    post: Types.ObjectId(post._id),
-                    post_owner: req.user._id,
-                    createdAt: post.createdAt
-                }))
-                .concat({ // append own post on newsfeed
-                    follower: req.user._id,
-                    post_owner: req.user._id,
-                    post: Types.ObjectId(post._id),
-                    createdAt: post.createdAt
+            let post;
+            if (config.db.type === 'postgres') {
+                post = await services.post.createPost(userId, postData);
+                // Add author info for response
+                post.author = {
+                    id: req.user['id'],
+                    username: req.user.username,
+                    profilePicture: req.user.profilePicture
+                };
+            } else {
+                post = new Post({
+                    _author_id: req.user._id,
+                    description: filterWords.clean(description),
+                    photos,
+                    privacy: privacy || 'public',
+                    createdAt: Date.now()
                 });
 
-            if (newsFeeds.length !== 0) {
-                await NewsFeed.insertMany(newsFeeds);
+                await post.save();
+                await post
+                    .populate({
+                        path: 'author',
+                        select: 'profilePicture username fullname'
+                    })
+                    .execPopulate();
             }
 
-            // Notify followers that new post has been made 
-            if (post.privacy !== 'private') {
-                const io = req.app.get('io');
-                myFollowers.forEach((id) => {
-                    io.to(id.toString()).emit('newFeed', {
-                        ...post.toObject(),
-                        isOwnPost: false
+
+            // For now, skip the newsfeed and notification logic for PostgreSQL
+            // This would need to be implemented with proper SQL services
+            if (config.db.type === 'mongodb') {
+                const myFollowersDoc = await Follow.find({ target: req.user._id }); // target is yourself
+                const myFollowers = myFollowersDoc.map(user => user.user); // so user property must be used
+
+                const newsFeeds = myFollowers
+                    .map(follower => ({ // add post to follower's newsfeed
+                        follower: Types.ObjectId(follower._id),
+                        post: Types.ObjectId(post._id),
+                        post_owner: req.user._id,
+                        createdAt: post.createdAt
+                    }))
+                    .concat({ // append own post on newsfeed
+                        follower: req.user._id,
+                        post_owner: req.user._id,
+                        post: Types.ObjectId(post._id),
+                        createdAt: post.createdAt
                     });
-                });
+
+                if (newsFeeds.length !== 0) {
+                    await NewsFeed.insertMany(newsFeeds);
+                }
+
+                // Notify followers that new post has been made
+                if (post.privacy !== 'private') {
+                    const io = req.app.get('io');
+                    myFollowers.forEach((id) => {
+                        io.to(id.toString()).emit('newFeed', {
+                            ...post.toObject(),
+                            isOwnPost: false
+                        });
+                    });
+                }
             }
 
-            return res.status(200).send(makeResponseJson({ ...post.toObject(), isOwnPost: true }));
+            const responseData = config.db.type === 'postgres'
+                ? { ...post, isOwnPost: true }
+                : { ...post.toObject(), isOwnPost: true };
+
+            return res.status(200).send(makeResponseJson(responseData));
         } catch (e) {
             console.log(e);
             next(e);
@@ -142,66 +168,93 @@ router.post(
     async (req: Request, res: Response, next: NextFunction) => {
         try {
             const { post_id } = req.params;
+            const userId = config.db.type === 'postgres' ? req.user['id'] : req.user['_id'];
 
-            const post = await Post.findById(post_id);
+            // Check if post exists using service layer
+            let post;
+            if (config.db.type === 'postgres') {
+                const posts = await services.post.getPosts(req.user, { _id: post_id });
+                post = posts[0];
+            } else {
+                post = await Post.findById(post_id);
+            }
 
             if (!post) return next(new ErrorHandler(400, 'Post not found.'));
 
             let state = false; // the state whether isLiked = true | false to be sent back to user
-            const query = {
-                target: Types.ObjectId(post_id),
-                user: req.user._id,
-                type: 'Post'
-            };
 
-            const likedPost = await Like.findOne(query); // Check if already liked post
+            if (config.db.type === 'postgres') {
+                // Use PostgreSQL service layer
+                const isLiked = await services.like.checkLike(userId, post_id, 'Post');
 
-            if (!likedPost) { // If not liked, save new like and notify post owner
-                const like = new Like({
-                    type: 'Post',
-                    target: post._id,
-                    user: req.user._id
-                });
+                if (!isLiked) {
+                    await services.like.createLike(userId, post_id, 'Post');
+                    state = true;
 
-                await like.save();
-                state = true;
-
-                // If not the post owner, send notification to post owner
-                if (post._author_id.toString() !== req.user._id.toString()) {
-                    const io = req.app.get('io');
-                    const targetUserID = Types.ObjectId(post._author_id);
-                    const newNotif = {
-                        type: ENotificationType.like,
-                        initiator: req.user._id,
-                        target: targetUserID,
-                        link: `/post/${post_id}`,
-                    };
-                    const notificationExists = await Notification.findOne(newNotif);
-
-                    if (!notificationExists) {
-                        const notification = new Notification({ ...newNotif, createdAt: Date.now() });
-
-                        const doc = await notification.save();
-                        await doc
-                            .populate({
-                                path: 'target initiator',
-                                select: 'fullname profilePicture username'
-                            })
-                            .execPopulate();
-
-                        io.to(targetUserID).emit('newNotification', { notification: doc, count: 1 });
-                    } else {
-                        await Notification.findOneAndUpdate(newNotif, { $set: { createdAt: Date.now() } });
-                    }
+                    // TODO: Add notification logic for PostgreSQL
+                } else {
+                    await services.like.deleteLike(userId, post_id, 'Post');
+                    state = false;
                 }
+
+                const likesCount = await services.like.getLikesCount(post_id, 'Post');
+                res.status(200).send(makeResponseJson({ state, likesCount }));
             } else {
-                await Like.findOneAndDelete(query);
-                state = false;
+                // Use MongoDB operations
+                const query = {
+                    target: Types.ObjectId(post_id),
+                    user: req.user._id,
+                    type: 'Post'
+                };
+
+                const likedPost = await Like.findOne(query);
+
+                if (!likedPost) {
+                    const like = new Like({
+                        type: 'Post',
+                        target: post._id,
+                        user: req.user._id
+                    });
+
+                    await like.save();
+                    state = true;
+
+                    // Notification logic for MongoDB
+                    if (post._author_id.toString() !== req.user._id.toString()) {
+                        const io = req.app.get('io');
+                        const targetUserID = Types.ObjectId(post._author_id);
+                        const newNotif = {
+                            type: ENotificationType.like,
+                            initiator: req.user._id,
+                            target: targetUserID,
+                            link: `/post/${post_id}`,
+                        };
+                        const notificationExists = await Notification.findOne(newNotif);
+
+                        if (!notificationExists) {
+                            const notification = new Notification({ ...newNotif, createdAt: Date.now() });
+
+                            const doc = await notification.save();
+                            await doc
+                                .populate({
+                                    path: 'target initiator',
+                                    select: 'fullname profilePicture username'
+                                })
+                                .execPopulate();
+
+                            io.to(targetUserID).emit('newNotification', { notification: doc, count: 1 });
+                        } else {
+                            await Notification.findOneAndUpdate(newNotif, { $set: { createdAt: Date.now() } });
+                        }
+                    }
+                } else {
+                    await Like.findOneAndDelete(query);
+                    state = false;
+                }
+
+                const likesCount = await Like.find({ target: Types.ObjectId(post_id) });
+                res.status(200).send(makeResponseJson({ state, likesCount: likesCount.length }));
             }
-
-            const likesCount = await Like.find({ target: Types.ObjectId(post_id) });
-
-            res.status(200).send(makeResponseJson({ state, likesCount: likesCount.length }));
         } catch (e) {
             console.log(e);
             next(e);

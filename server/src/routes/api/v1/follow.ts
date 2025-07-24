@@ -3,6 +3,8 @@ import { makeResponseJson } from '@/helpers/utils';
 import { ErrorHandler, isAuthenticated, validateObjectID } from '@/middlewares';
 import { Follow, NewsFeed, Notification, Post, User } from '@/schemas';
 import services from '@/services';
+import config from '@/config/config';
+import UserService from '@/services/user.service';
 import { NextFunction, Request, Response, Router } from 'express';
 import { Types } from 'mongoose';
 
@@ -16,28 +18,36 @@ router.post(
         try {
             const { follow_id } = req.params;
 
-            const user = User.findById(follow_id);
+            const user = await UserService.getUserById(follow_id);
             // CHECK IF FOLLOWING USER EXIST
             if (!user) return next(new ErrorHandler(400, 'The person you\'re trying to follow doesn\'t exist.'));
+
             // CHECK IF FOLLOWING IS NOT YOURSELF
-            if (follow_id === req.user._id.toString()) return next(new ErrorHandler(400, 'You can\'t follow yourself.'));
+            const currentUserId = config.db.type === 'postgres' ? req.user.id : req.user._id.toString();
+            if (follow_id === currentUserId) return next(new ErrorHandler(400, 'You can\'t follow yourself.'));
 
             //  CHECK IF ALREADY FOLLOWING
-            const isFollowing = await Follow
-                .findOne({
-                    user: req.user._id,
-                    target: Types.ObjectId(follow_id)
-                });
-
-            if (isFollowing) {
-                return next(new ErrorHandler(400, 'Already following.'))
+            if (config.db.type === 'postgres') {
+                const isFollowing = await services.follow.checkFollow(currentUserId, follow_id);
+                if (isFollowing) {
+                    return next(new ErrorHandler(400, 'Already following.'));
+                }
+                await services.follow.createFollow(currentUserId, follow_id);
             } else {
-                const newFollower = new Follow({
+                const isFollowing = await Follow.findOne({
                     user: req.user._id,
                     target: Types.ObjectId(follow_id)
                 });
 
-                await newFollower.save();
+                if (isFollowing) {
+                    return next(new ErrorHandler(400, 'Already following.'))
+                } else {
+                    const newFollower = new Follow({
+                        user: req.user._id,
+                        target: Types.ObjectId(follow_id)
+                    });
+                    await newFollower.save();
+                }
             }
 
             // TODO ---- FILTER OUT DUPLICATES
@@ -96,14 +106,20 @@ router.post(
         try {
             const { follow_id } = req.params;
 
-            const user = User.findById(follow_id);
+            const user = await UserService.getUserById(follow_id);
             if (!user) return next(new ErrorHandler(400, 'The person you\'re trying to unfollow doesn\'t exist.'));
-            if (follow_id === req.user._id.toString()) return next(new ErrorHandler(400));
 
-            await Follow.deleteOne({
-                target: Types.ObjectId(follow_id),
-                user: req.user._id
-            });
+            const currentUserId = config.db.type === 'postgres' ? req.user.id : req.user._id.toString();
+            if (follow_id === currentUserId) return next(new ErrorHandler(400));
+
+            if (config.db.type === 'postgres') {
+                await services.follow.deleteFollow(currentUserId, follow_id);
+            } else {
+                await Follow.deleteOne({
+                    target: Types.ObjectId(follow_id),
+                    user: req.user._id
+                });
+            }
 
             // UNSUBSCRIBE TO PERSON'S FEED
             await NewsFeed
@@ -130,11 +146,12 @@ router.get(
             const limit = USERS_LIMIT;
             const skip = offset * limit;
 
-            const user = await User.findOne({ username });
+            const user = await UserService.getUserByUsername(username);
             if (!user) return next(new ErrorHandler(404, 'User not found.'))
 
+            const userId = config.db.type === 'postgres' ? user['id'] : user['_id'];
             const following = await services.follow.getFollow(
-                { user: user._id },
+                { user: userId },
                 'following',
                 req.user,
                 skip,
@@ -161,11 +178,12 @@ router.get(
             const limit = USERS_LIMIT;
             const skip = offset * limit;
 
-            const user = await User.findOne({ username });
+            const user = await UserService.getUserByUsername(username);
             if (!user) return next(new ErrorHandler(404, 'User not found.'))
 
+            const userId = config.db.type === 'postgres' ? user['id'] : user['_id'];
             const followers = await services.follow.getFollow(
-                { target: user._id },
+                { target: userId },
                 'followers',
                 req.user,
                 skip,
@@ -193,36 +211,9 @@ router.get(
 
             const limit = parseInt(req.query.limit as string) || USERS_LIMIT;
             const skip = skipParam || offset * limit;
+            const userId = config.db.type === 'postgres' ? req.user['id'] : req.user['_id'];
 
-            const myFollowingDoc = await Follow.find({ user: req.user._id });
-            const myFollowing = myFollowingDoc.map(user => user.target);
-
-            const people = await User.aggregate([
-                {
-                    $match: {
-                        _id: {
-                            $nin: [...myFollowing, req.user._id]
-                        }
-                    }
-                },
-                ...(limit < 10 ? ([{ $sample: { size: limit } }]) : []),
-                { $skip: skip },
-                { $limit: limit },
-                {
-                    $addFields: {
-                        isFollowing: false
-                    }
-                },
-                {
-                    $project: {
-                        _id: 0,
-                        id: '$_id',
-                        username: '$username',
-                        profilePicture: '$profilePicture',
-                        isFollowing: 1
-                    }
-                }
-            ]);
+            const people = await services.follow.getSuggestedPeople(userId, skip, limit);
 
             if (people.length === 0) return next(new ErrorHandler(404, 'No suggested people.'));
 

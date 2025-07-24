@@ -21,6 +21,7 @@ export default {
   },
   db: {
     type: dbType,
+    sync: process.env.DATABASE_SYNC === 'true',
   },
   postgres: {
     user: process.env.POSTGRES_USER || 'postgres',

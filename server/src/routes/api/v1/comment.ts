@@ -3,6 +3,8 @@ import { filterWords, makeResponseJson } from '@/helpers/utils';
 import { ErrorHandler, isAuthenticated, validateObjectID } from '@/middlewares';
 import { Comment, Like, Notification, Post } from '@/schemas';
 import { ENotificationType } from '@/schemas/NotificationSchema';
+import services from '@/services';
+import config from '@/config/config';
 import { schemas, validateBody } from '@/validations/validations';
 import { NextFunction, Request, Response, Router } from 'express';
 import { Types } from 'mongoose';
@@ -18,59 +20,91 @@ router.post(
         try {
             const { post_id } = req.params;
             const { body } = req.body;
-            const userID = req.user._id;
+            const userId = config.db.type === 'postgres' ? req.user['id'] : req.user['_id'];
 
-            // check if the POST actually exists
-            const post = await Post.findById(post_id);
+            // Check if the POST actually exists using service layer
+            let post;
+            if (config.db.type === 'postgres') {
+                const posts = await services.post.getPosts(req.user, { _id: post_id });
+                post = posts[0];
+            } else {
+                post = await Post.findById(post_id);
+            }
+
             if (!post) return next(new ErrorHandler(404, 'Unable to comment. Post not found.'));
 
-            const comment = new Comment({
-                _post_id: post_id,
-                _author_id: userID,
-                body: filterWords.clean(body),
-                parents: [],
-                createdAt: Date.now()
-            });
-
-            await comment.save();
-            await comment
-                .populate({
-                    path: 'author',
-                    select: 'username profilePicture fullname'
-                })
-                .execPopulate();
-
-            // SEND NOTIFICATION
-            if (post._author_id.toString() !== userID.toString()) {
-                const io = req.app.get('io');
-                const notification = new Notification({
-                    type: 'comment',
-                    initiator: userID,
-                    target: Types.ObjectId(post._author_id),
-                    link: `/post/${post_id}`,
+            let comment;
+            if (config.db.type === 'postgres') {
+                comment = await services.comment.createComment(userId, post_id, filterWords.clean(body));
+                // Add author info for response
+                comment.author = {
+                    id: req.user['id'],
+                    username: req.user.username,
+                    firstname: req.user.firstname,
+                    lastname: req.user.lastname
+                };
+            } else {
+                comment = new Comment({
+                    _post_id: post_id,
+                    _author_id: userId,
+                    body: filterWords.clean(body),
+                    parents: [],
                     createdAt: Date.now()
                 });
 
-                notification
-                    .save()
-                    .then(async (doc) => {
-                        await doc
-                            .populate({
-                                path: 'target initiator',
-                                select: 'fullname profilePicture username'
-                            })
-                            .execPopulate();
+                await comment.save();
+                await comment
+                    .populate({
+                        path: 'author',
+                        select: 'username profilePicture fullname'
+                    })
+                    .execPopulate();
+            }
 
-                        io.to(post._author_id.toString()).emit('newNotification', { notification: doc, count: 1 });
+            // For now, skip notification logic for PostgreSQL
+            // This would need to be implemented with proper SQL services
+            if (config.db.type === 'mongodb') {
+                // SEND NOTIFICATION
+                if (post._author_id.toString() !== userId.toString()) {
+                    const io = req.app.get('io');
+                    const notification = new Notification({
+                        type: 'comment',
+                        initiator: userId,
+                        target: Types.ObjectId(post._author_id),
+                        link: `/post/${post_id}`,
+                        createdAt: Date.now()
                     });
+
+                    notification
+                        .save()
+                        .then(async (doc) => {
+                            await doc
+                                .populate({
+                                    path: 'target initiator',
+                                    select: 'fullname profilePicture username'
+                                })
+                                .execPopulate();
+
+                            io.to(post._author_id.toString()).emit('newNotification', { notification: doc, count: 1 });
+                        });
+                }
             }
 
-            // append the isPostOwner and isOwnComment property
-            const result = {
-                ...comment.toObject(),
-                isOwnComment: true,
-                isPostOwner: post._author_id.toString() === req.user._id.toString()
-            }
+            // Append the isPostOwner and isOwnComment property
+            const postAuthorId = config.db.type === 'postgres' ? post['_author_id'] : post._author_id.toString();
+            const currentUserId = config.db.type === 'postgres' ? req.user['id'] : req.user._id.toString();
+
+            const result = config.db.type === 'postgres'
+                ? {
+                    ...comment,
+                    isOwnComment: true,
+                    isPostOwner: postAuthorId.toString() === currentUserId.toString()
+                }
+                : {
+                    ...comment.toObject(),
+                    isOwnComment: true,
+                    isPostOwner: postAuthorId === currentUserId
+                };
 
             res.status(200).send(makeResponseJson(result));
         } catch (e) {
@@ -530,65 +564,90 @@ router.post(
         try {
             const { comment_id } = req.params;
 
-            const comment = await Comment.findById(comment_id);
+            const userId = config.db.type === 'postgres' ? req.user['id'] : req.user['_id'];
+
+            // Check if comment exists using service layer
+            let comment;
+            if (config.db.type === 'postgres') {
+                comment = await services.comment.getCommentById(comment_id);
+            } else {
+                comment = await Comment.findById(comment_id);
+            }
 
             if (!comment) return next(new ErrorHandler(400, 'Comment not found.'));
 
             let state = false; // the state whether isLiked = true | false to be sent back to user
-            const query = {
-                target: Types.ObjectId(comment_id),
-                user: req.user._id,
-                type: 'Comment'
-            };
 
-            const likedComment = await Like.findOne(query); // Check if already liked post
+            if (config.db.type === 'postgres') {
+                // Use PostgreSQL service layer
+                const isLiked = await services.like.checkLike(userId, comment_id, 'Comment');
 
-            if (!likedComment) { // If not liked, save new like and notify post owner
-                const like = new Like({
-                    type: 'Comment',
-                    target: comment._id,
-                    user: req.user._id
-                });
-
-                await like.save();
-                state = true;
-
-                // If not the post owner, send notification to post owner
-                if (comment._author_id.toString() !== req.user._id.toString()) {
-                    const io = req.app.get('io');
-                    const targetUserID = Types.ObjectId(comment._author_id);
-                    const newNotif = {
-                        type: ENotificationType.commentLike,
-                        initiator: req.user._id,
-                        target: targetUserID,
-                        link: `/post/${comment._post_id}`,
-                    };
-                    const notificationExists = await Notification.findOne(newNotif);
-
-                    if (!notificationExists) {
-                        const notification = new Notification({ ...newNotif, createdAt: Date.now() });
-
-                        const doc = await notification.save();
-                        await doc
-                            .populate({
-                                path: 'target initiator',
-                                select: 'fullname profilePicture username'
-                            })
-                            .execPopulate();
-
-                        io.to(targetUserID).emit('newNotification', { notification: doc, count: 1 });
-                    } else {
-                        await Notification.findOneAndUpdate(newNotif, { $set: { createdAt: Date.now() } });
-                    }
+                if (!isLiked) {
+                    await services.like.createLike(userId, comment_id, 'Comment');
+                    state = true;
+                } else {
+                    await services.like.deleteLike(userId, comment_id, 'Comment');
+                    state = false;
                 }
+
+                const likesCount = await services.like.getLikesCount(comment_id, 'Comment');
+                res.status(200).send(makeResponseJson({ state, likesCount }));
             } else {
-                await Like.findOneAndDelete(query);
-                state = false;
+                // Use MongoDB operations
+                const query = {
+                    target: Types.ObjectId(comment_id),
+                    user: req.user._id,
+                    type: 'Comment'
+                };
+
+                const likedComment = await Like.findOne(query);
+
+                if (!likedComment) {
+                    const like = new Like({
+                        type: 'Comment',
+                        target: comment._id,
+                        user: req.user._id
+                    });
+
+                    await like.save();
+                    state = true;
+
+                    // Notification logic for MongoDB
+                    if (comment._author_id.toString() !== req.user._id.toString()) {
+                        const io = req.app.get('io');
+                        const targetUserID = Types.ObjectId(comment._author_id);
+                        const newNotif = {
+                            type: ENotificationType.commentLike,
+                            initiator: req.user._id,
+                            target: targetUserID,
+                            link: `/post/${comment._post_id}`,
+                        };
+                        const notificationExists = await Notification.findOne(newNotif);
+
+                        if (!notificationExists) {
+                            const notification = new Notification({ ...newNotif, createdAt: Date.now() });
+
+                            const doc = await notification.save();
+                            await doc
+                                .populate({
+                                    path: 'target initiator',
+                                    select: 'fullname profilePicture username'
+                                })
+                                .execPopulate();
+
+                            io.to(targetUserID).emit('newNotification', { notification: doc, count: 1 });
+                        } else {
+                            await Notification.findOneAndUpdate(newNotif, { $set: { createdAt: Date.now() } });
+                        }
+                    }
+                } else {
+                    await Like.findOneAndDelete(query);
+                    state = false;
+                }
+
+                const likesCount = await Like.find({ target: Types.ObjectId(comment_id) });
+                res.status(200).send(makeResponseJson({ state, likesCount: likesCount.length }));
             }
-
-            const likesCount = await Like.find({ target: Types.ObjectId(comment_id) });
-
-            res.status(200).send(makeResponseJson({ state, likesCount: likesCount.length }));
         } catch (e) {
             console.log(e);
             next(e);

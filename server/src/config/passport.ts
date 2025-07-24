@@ -1,4 +1,7 @@
 import User, { IUser } from '@/schemas/UserSchema';
+import UserPostgres from '@/models/User';
+import config from '@/config/config';
+import bcrypt from 'bcrypt';
 import FacebookStrategy from 'passport-facebook';
 import GitHubStrategy from 'passport-github';
 import GoogleStrategy from 'passport-google-oauth2';
@@ -6,20 +9,26 @@ import LocalStrategy from 'passport-local';
 
 
 export default function (passport) {
-    passport.serializeUser(function (user: IUser, done: any) {
-        done(null, user._id);
+    passport.serializeUser(function (user: any, done: any) {
+        const userId = config.db.type === 'postgres' ? user.id : user._id;
+        done(null, userId);
         console.log('SERIALIZE', user)
     });
 
     // used to deserialize the user
-    passport.deserializeUser(function (id: string, done: any) {
-        User.findById(id, function (err, user) {
-            if (err) {
-                console.log('ERR', err)
-                return done(err);
+    passport.deserializeUser(async function (id: string, done: any) {
+        try {
+            let user;
+            if (config.db.type === 'postgres') {
+                user = await UserPostgres.findByPk(id);
+            } else {
+                user = await User.findById(id);
             }
-            done(err, user);
-        });
+            done(null, user);
+        } catch (err) {
+            console.log('ERR', err);
+            done(err, null);
+        }
     });
 
     passport.use('local-register', new LocalStrategy.Strategy({
@@ -27,25 +36,38 @@ export default function (passport) {
         usernameField: 'email',
         passwordField: 'password',
         passReqToCallback: true // allows us to pass back the entire request to the callback
-    }, (req, email, password, done) => {
-        User.findOne({ email })
-            .then((user) => {
-                if (user) {
-                    return done(null, false, { message: 'Email already has been already used by other user.' });
-                } else {
-                    const newUser = new User({ email, password, username: req.body.username });
+    }, async (req, email, password, done) => {
+        try {
+            let existingUser;
+            if (config.db.type === 'postgres') {
+                existingUser = await UserPostgres.findOne({ where: { email } });
+            } else {
+                existingUser = await User.findOne({ email });
+            }
 
-                    newUser.save(function (err) {
-                        if (err) {
-                            return done(err);
-                        }
-                        return done(null, newUser);
-                    });
-                }
-            })
-            .catch((e) => {
-                return done(e);
-            })
+            if (existingUser) {
+                return done(null, false, { message: 'Email already has been already used by other user.' });
+            }
+
+            if (config.db.type === 'postgres') {
+                // Hash password for PostgreSQL
+                const saltRounds = 10;
+                const hashedPassword = await bcrypt.hash(password, saltRounds);
+
+                const newUser = await UserPostgres.create({
+                    email,
+                    password: hashedPassword,
+                    username: req.body.username
+                });
+                return done(null, newUser);
+            } else {
+                const newUser = new User({ email, password, username: req.body.username });
+                await newUser.save();
+                return done(null, newUser);
+            }
+        } catch (err) {
+            return done(err);
+        }
     })
     );
 
@@ -57,21 +79,37 @@ export default function (passport) {
             passReqToCallback: true
         }, async (req, username, password, done) => {
             try {
-                const user = await User.findOne({ username });
+                let user;
+                if (config.db.type === 'postgres') {
+                    user = await UserPostgres.findOne({ where: { username } });
+                } else {
+                    user = await User.findOne({ username });
+                }
 
                 if (user) {
-                    user.passwordMatch(password, function (err, match) {
-                        if (err) {
-                            return done(err);
-                        }
+                    if (config.db.type === 'postgres') {
+                        // For PostgreSQL, compare password directly with bcrypt
+                        const match = await bcrypt.compare(password, user.password);
                         if (match) {
                             return done(null, user);
                         } else {
-                            return done(null, false, {
-                                message: 'Incorrect credentials.'
-                            });
+                            return done(null, false, { message: 'Incorrect credentials.' });
                         }
-                    });
+                    } else {
+                        // For MongoDB, use the existing passwordMatch method
+                        user.passwordMatch(password, function (err, match) {
+                            if (err) {
+                                return done(err);
+                            }
+                            if (match) {
+                                return done(null, user);
+                            } else {
+                                return done(null, false, {
+                                    message: 'Incorrect credentials.'
+                                });
+                            }
+                        });
+                    }
                 } else {
                     return done(null, false, { message: 'Incorrect credentials.' });
                 }

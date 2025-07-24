@@ -2,6 +2,8 @@ import { MESSAGES_LIMIT } from '@/constants/constants';
 import { makeResponseJson } from '@/helpers/utils';
 import { ErrorHandler, isAuthenticated, validateObjectID } from '@/middlewares';
 import { Chat, Message, User } from '@/schemas';
+import services from '@/services';
+import config from '@/config/config';
 import { NextFunction, Request, Response, Router } from 'express';
 import { Types } from 'mongoose';
 
@@ -185,39 +187,45 @@ router.get(
     isAuthenticated,
     async (req: Request, res: Response, next: NextFunction) => {
         try {
-            const agg = await Message.aggregate([
-                {
-                    $match: {
-                        to: req.user._id
-                    }
-                },
-                {
-                    $group: {
-                        _id: '$from',
-                        seenCount: {
-                            $push: {
-                                $cond: [
-                                    { $eq: ['$seen', false] },
-                                    '$_id',
-                                    '$$REMOVE'
-                                ]
+            const userId = config.db.type === 'postgres' ? req.user['id'] : req.user['_id'];
+
+            if (config.db.type === 'postgres') {
+                const count = await services.message.getUnreadMessagesCount(userId);
+                res.status(200).send(makeResponseJson({ count }));
+            } else {
+                const agg = await Message.aggregate([
+                    {
+                        $match: {
+                            to: req.user._id
+                        }
+                    },
+                    {
+                        $group: {
+                            _id: '$from',
+                            seenCount: {
+                                $push: {
+                                    $cond: [
+                                        { $eq: ['$seen', false] },
+                                        '$_id',
+                                        '$$REMOVE'
+                                    ]
+                                }
+                            },
+                        }
+                    },
+                    {
+                        $project: {
+                            _id: 0,
+                            count: {
+                                $size: '$seenCount'
                             }
-                        },
-                    }
-                },
-                {
-                    $project: {
-                        _id: 0,
-                        count: {
-                            $size: '$seenCount'
                         }
                     }
-                }
-            ]);
+                ]);
 
-            const totalUnseen = agg.reduce((acc, obj) => acc + obj.count, 0);
-
-            res.status(200).send(makeResponseJson({ count: totalUnseen }));
+                const totalUnseen = agg.reduce((acc, obj) => acc + obj.count, 0);
+                res.status(200).send(makeResponseJson({ count: totalUnseen }));
+            }
         } catch (e) {
             console.log('CANT GET MESSAGES', e);
             next(e);

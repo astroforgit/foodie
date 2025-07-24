@@ -17,11 +17,11 @@ const initStatus: IResponseStatus = {
     timestamp: null
 };
 
-const sessionizeUser = (user: Partial<IUser>) => ({
-    id: user._id,
+const sessionizeUser = (user: any) => ({
+    id: user._id || user.id, // Support both MongoDB (_id) and PostgreSQL (id)
     username: user.username,
-    fullname: user.fullname,
-    profilePicture: user.profilePicture
+    fullname: user.fullname || (user.firstname && user.lastname ? `${user.firstname} ${user.lastname}` : null),
+    profilePicture: user.profilePicture || {}
 })
 
 const makeResponseJson = (data: any, success = true) => {
