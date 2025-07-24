@@ -12,7 +12,7 @@ export const getNewsFeed = async (user: IUser | null, query: any, skip: number, 
             replacements: { userId: user._id },
             type: QueryTypes.SELECT
         });
-        const followingIds = followingResult.map((row: { target_id: string; }) => row.target_id);
+        const followingIds = (followingResult as { target_id: string }[]).map((row: { target_id: string; }) => row.target_id);
 
         if (followingIds.length === 0) {
             return [];
@@ -51,7 +51,7 @@ export const getNewsFeed = async (user: IUser | null, query: any, skip: number, 
             type: QueryTypes.SELECT
         });
 
-        return posts.rows;
+        return posts as any[];
     } catch (error) {
         console.error("Error fetching news feed:", error);
         throw error;

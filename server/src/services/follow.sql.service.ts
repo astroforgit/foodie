@@ -62,7 +62,7 @@ export const getFollow = async (
             type: QueryTypes.SELECT
         });
 
-        return agg.rows;
+        return agg as IUser[];
     } catch (error) {
         console.error("Error fetching follow data:", error);
         throw error;

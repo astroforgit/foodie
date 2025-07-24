@@ -74,7 +74,7 @@ export const getPosts = async (user: IUser | null, query: any, paginate?: Partia
             type: QueryTypes.SELECT
         });
 
-        return posts;
+        return posts as any[];
     } catch (error) {
         console.error("Error fetching posts:", error);
         throw error;
@@ -114,7 +114,7 @@ export const getPostById = async (postId: string, user: IUser | null): Promise<a
             type: QueryTypes.SELECT
         });
 
-        return post[0];
+        return (post as any[])[0];
     } catch (error) {
         console.error("Error fetching post by id:", error);
         throw error;
@@ -133,7 +133,7 @@ export const createPost = async (authorId: string, data: any): Promise<any> => {
             type: QueryTypes.INSERT
         });
 
-        return post[0];
+        return (post as any)[0];
     } catch (error) {
         console.error("Error creating post:", error);
         throw error;
@@ -158,7 +158,7 @@ export const updatePost = async (postId: string, data: any): Promise<any> => {
             type: QueryTypes.UPDATE
         });
 
-        return post[0];
+        return (post as any)[0];
     } catch (error) {
         console.error("Error updating post:", error);
         throw error;

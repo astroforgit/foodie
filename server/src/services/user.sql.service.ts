@@ -68,7 +68,7 @@ export const searchUsers = async (searchTerm: string, limit: number = 10): Promi
             replacements: { searchTerm: `%${searchTerm}%`, limit: limit },
             type: QueryTypes.SELECT
         });
-        return users;
+        return users as any[];
     } catch (error) {
         console.error("Error searching users:", error);
         throw error;
@@ -96,7 +96,7 @@ export const updateUser = async (userId: string, updates: any): Promise<any> => 
             type: QueryTypes.UPDATE
         });
 
-        return user[0];
+        return (user as any[])[0];
     } catch (error) {
         console.error("Error updating user:", error);
         throw error;
