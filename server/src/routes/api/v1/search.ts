@@ -2,7 +2,7 @@ import { makeResponseJson } from '@/helpers/utils';
 import { ErrorHandler } from '@/middlewares';
 import { Follow, User } from '@/schemas';
 import { EPrivacy } from '@/schemas/PostSchema';
-import { PostService } from '@/services';
+import services from '@/services';
 import { NextFunction, Request, Response, Router } from 'express';
 
 const router = Router({ mergeParams: true });
@@ -21,7 +21,7 @@ router.get(
             let result = [];
 
             if (type === 'posts') {
-                const posts = await PostService
+                const posts = await services.post
                     .getPosts(
                         req.user,
                         {

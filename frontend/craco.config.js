@@ -2,17 +2,6 @@ const path = require('path');
 const { CracoAliasPlugin, configPaths } = require('react-app-rewire-alias')
 
 module.exports = {
-    style: {
-        postcss: {
-            plugins: [
-                require('postcss-import'),
-                require('postcss-nested'),
-                require('postcss-extend'),
-                require('tailwindcss'),
-                require('autoprefixer'),
-            ],
-        },
-    },
     webpack: {
         alias: {
             // Add the aliases for all the top-level folders in the `src/` folder.

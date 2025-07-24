@@ -4,7 +4,7 @@ import { ErrorHandler, isAuthenticated, validateObjectID } from '@/middlewares';
 import { Bookmark, Comment, Follow, Like, NewsFeed, Notification, Post, User } from '@/schemas';
 import { ENotificationType } from '@/schemas/NotificationSchema';
 import { EPrivacy } from '@/schemas/PostSchema';
-import { PostService } from '@/services';
+import services from '@/services';
 import { deleteImageFromStorage, multer, uploadImageToStorage } from '@/storage/cloudinary';
 import { schemas, validateBody } from '@/validations/validations';
 import { NextFunction, Request, Response, Router } from 'express';
@@ -119,7 +119,7 @@ router.get(
             }
 
             // run aggregation service
-            const agg = await PostService.getPosts(req.user, query, { skip, limit, sort: sortQuery });
+            const agg = await services.post.getPosts(req.user, query, { skip, limit, sort: sortQuery });
 
             if (agg.length <= 0 && offset === 0) {
                 return next(new ErrorHandler(404, `${username} hasn't posted anything yet.`));
@@ -302,7 +302,7 @@ router.get(
         try {
             const { post_id } = req.params;
 
-            const agg = await PostService.getPosts(req.user, { _id: Types.ObjectId(post_id) });
+            const agg = await services.post.getPosts(req.user, { _id: Types.ObjectId(post_id) });
 
             const post = agg[0] || {}
 

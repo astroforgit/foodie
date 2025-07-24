@@ -17,6 +17,15 @@ export default {
     env,
     port: process.env.PORT || 9000,
   },
+  db: {
+    type: process.env.DB_TYPE || 'mongodb',
+  },
+  postgres: {
+    user: process.env.POSTGRES_USER || 'postgres',
+    password: process.env.POSTGRES_PASSWORD || 'postgres',
+    host: process.env.POSTGRES_HOST || 'localhost',
+    dbName: process.env.POSTGRES_DB_NAME || 'foodie',
+  },
   mongodb: {
     uri: process.env.MONGODB_URI,
     dbName: process.env.MONGODB_DB_NAME

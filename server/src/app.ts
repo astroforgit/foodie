@@ -12,7 +12,7 @@ import passport from 'passport';
 import config from './config/config';
 import initializePassport from './config/passport';
 import initializeSocket from './config/socket';
-import initializeDB from './db/db';
+import db from './db';
 import errorHandler from './middlewares/error.middleware';
 import routers from './routes/createRouter';
 
@@ -27,7 +27,7 @@ class Express {
   constructor() {
     this.app = express();
     this.server = http.createServer(this.app);
-    initializeDB();
+    db();
     this.initializeMiddlewares();
     initializeSocket(this.app, this.server);
     initializePassport(passport);

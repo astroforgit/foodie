@@ -2,7 +2,7 @@ const plugin = require('tailwindcss/plugin');
 
 module.exports = {
   purge: ['./src/**/*.{js,jsx,ts,tsx}', './public/index.html'],
-  darkMode: 'class', // or 'media' or 'class'
+
   theme: {
     screens: {
       'mobile': '420px',
@@ -71,7 +71,7 @@ module.exports = {
   },
   variants: {
     cursor: ['hover', 'focus'],
-    backgroundColor: ['hover', 'focus', 'important', 'responsive', 'dark'],
+    backgroundColor: ['hover', 'focus', 'important', 'responsive'],
     backgroundSize: ['important', 'responsive'],
     backgroundRepeat: ['important', 'responsive'],
     backgroundPosition: ['important', 'responsive'],
@@ -79,10 +79,10 @@ module.exports = {
     display: ['responsive'],
     padding: ['important', 'responsive'],
     borderRadius: ['important', 'responsive'],
-    textColor: ['important', 'group-hover', 'hover', 'dark'],
-    borderColor: ['important', 'focus', 'hover', 'dark'],
+    textColor: ['important', 'group-hover', 'hover'],
+    borderColor: ['important', 'focus', 'hover'],
     outlineOffset: ['hover'],
-    boxShadow: ['responsive', 'dark'],
+    boxShadow: ['responsive'],
     border: ['hover', 'responsive'],
     extend: {
       cursor: ['disabled'],

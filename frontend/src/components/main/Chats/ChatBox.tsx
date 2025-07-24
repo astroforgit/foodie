@@ -76,7 +76,7 @@ const ChatBox: React.FC<IProps> = ({ user, target }) => {
         } catch (e) {
             if (didMount) {
                 setLoading(false);
-                setError(e);
+                setError(e as IError);
             }
         }
     }
@@ -96,7 +96,7 @@ const ChatBox: React.FC<IProps> = ({ user, target }) => {
             } catch (e) {
                 if (didMount) {
                     setSending(false);
-                    setError(e);
+                    setError(e as IError);
                 }
             }
         }

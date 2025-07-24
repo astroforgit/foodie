@@ -2,7 +2,7 @@ import { USERS_LIMIT } from '@/constants/constants';
 import { makeResponseJson } from '@/helpers/utils';
 import { ErrorHandler, isAuthenticated, validateObjectID } from '@/middlewares';
 import { Follow, NewsFeed, Notification, Post, User } from '@/schemas';
-import { FollowService } from '@/services';
+import services from '@/services';
 import { NextFunction, Request, Response, Router } from 'express';
 import { Types } from 'mongoose';
 
@@ -133,7 +133,7 @@ router.get(
             const user = await User.findOne({ username });
             if (!user) return next(new ErrorHandler(404, 'User not found.'))
 
-            const following = await FollowService.getFollow(
+            const following = await services.follow.getFollow(
                 { user: user._id },
                 'following',
                 req.user,
@@ -164,7 +164,7 @@ router.get(
             const user = await User.findOne({ username });
             if (!user) return next(new ErrorHandler(404, 'User not found.'))
 
-            const followers = await FollowService.getFollow(
+            const followers = await services.follow.getFollow(
                 { target: user._id },
                 'followers',
                 req.user,

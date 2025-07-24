@@ -9,12 +9,6 @@
   --scrollBarTrackBg: #cacaca;
 }
 
-:root.dark {
-  --background: #08070f;
-  --modalBackground: #100f17;
-  --modalOverlayBackground: rgba(0,0,0, .7);
-  --scrollBarTrackBg: #1e1c2a;
-}
 
 @layer base {
   h1, h2 {

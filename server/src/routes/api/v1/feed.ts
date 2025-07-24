@@ -2,7 +2,7 @@ import { FEED_LIMIT } from '@/constants/constants';
 import { makeResponseJson } from '@/helpers/utils';
 import { ErrorHandler } from '@/middlewares';
 import { EPrivacy } from '@/schemas/PostSchema';
-import { NewsFeedService, PostService } from '@/services';
+import services from '@/services';
 import { NextFunction, Request, Response, Router } from 'express';
 
 const router = Router({ mergeParams: true });
@@ -19,14 +19,14 @@ router.get(
             let result = [];
 
             if (req.isAuthenticated()) {
-                result = await NewsFeedService.getNewsFeed(
+                result = await services.newsfeed.getNewsFeed(
                     req.user, 
                     { follower: req.user._id }, 
                     skip, 
                     limit
                 );
             } else {
-                result = await PostService.getPosts(null, { privacy: EPrivacy.public }, { skip, limit, sort: { createdAt: -1 } });
+                result = await services.post.getPosts(null, { privacy: EPrivacy.public }, { skip, limit, sort: { createdAt: -1 } });
             }
 
             if (result.length === 0) {
