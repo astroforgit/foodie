@@ -12,8 +12,9 @@ interface IProps {
 const ProtectedRoute: React.FC<IProps> = ({ isAuth, component: Component, path, ...rest }) => {
     return (
         <Route
+            path={path}
             {...rest}
-            component={(props: any) => {
+            render={(props: any) => {
                 return isAuth ? <Component {...props} /> : <Redirect to={LOGIN} />
             }}
         />

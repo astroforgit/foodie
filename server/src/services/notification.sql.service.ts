@@ -100,11 +100,55 @@ export const markAsRead = async (notificationId: string): Promise<void> => {
             SET unread = false
             WHERE id = :notificationId
         `, {
-            replacements: { notificationId },
+            replacements: { notificationId: parseInt(notificationId) },
             type: QueryTypes.UPDATE
         });
     } catch (error) {
         console.error("Error marking notification as read:", error);
+        throw error;
+    }
+};
+
+export const findNotification = async (data: {
+    type: string;
+    initiator: string;
+    target: string;
+    link: string;
+}): Promise<any | null> => {
+    try {
+        const result = await sequelize.query(`
+            SELECT *
+            FROM "Notifications"
+            WHERE type = :type AND initiator = :initiator AND target = :target AND link = :link
+            LIMIT 1
+        `, {
+            replacements: {
+                type: data.type,
+                initiator: parseInt(data.initiator),
+                target: parseInt(data.target),
+                link: data.link
+            },
+            type: QueryTypes.SELECT
+        });
+        return (result as any[])[0] || null;
+    } catch (error) {
+        console.error("Error finding notification:", error);
+        throw error;
+    }
+};
+
+export const updateNotificationTimestamp = async (notificationId: string): Promise<void> => {
+    try {
+        await sequelize.query(`
+            UPDATE "Notifications"
+            SET "createdAt" = NOW(), "updatedAt" = NOW()
+            WHERE id = :notificationId
+        `, {
+            replacements: { notificationId: parseInt(notificationId) },
+            type: QueryTypes.UPDATE
+        });
+    } catch (error) {
+        console.error("Error updating notification timestamp:", error);
         throw error;
     }
 };
@@ -121,11 +165,16 @@ export const createNotification = async (data: {
             VALUES (:type, :initiator, :target, :link, NOW(), NOW())
             RETURNING *
         `, {
-            replacements: data,
+            replacements: {
+                type: data.type,
+                initiator: parseInt(data.initiator),
+                target: parseInt(data.target),
+                link: data.link
+            },
             type: QueryTypes.INSERT
         });
 
-        return result[0];
+        return (result as any)[0][0];
     } catch (error) {
         console.error("Error creating notification:", error);
         throw error;

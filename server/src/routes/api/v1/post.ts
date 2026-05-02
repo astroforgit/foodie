@@ -124,32 +124,58 @@ router.get(
             const { username } = req.params;
             const { sortBy, sortOrder } = req.query;
 
-            const user = await User.findOne({ username });
-            const myFollowingDoc = await Follow.find({ user: req.user._id });
-            const myFollowing = myFollowingDoc.map(user => user.target);
-
-            if (!user) return next(new ErrorHandler(404, 'User not found'));
-
             const offset = parseInt(req.query.offset as string) || 0;
             const limit = POST_LIMIT;
             const skip = offset * limit;
-            const query = {
-                _author_id: Types.ObjectId(user._id),
-                privacy: { $in: [EPrivacy.public] },
-            };
             const sortQuery = {
                 [sortBy || 'createdAt']: sortOrder === 'asc' ? 1 : -1
             };
 
-            if (username === req.user.username) { // if own profile, get both public,private,follower posts
-                query.privacy.$in = [EPrivacy.public, EPrivacy.follower, EPrivacy.private];
-            } else if (myFollowing.includes(user._id.toString())) {
-                // else get only public posts or follower-only posts
-                query.privacy.$in = [EPrivacy.public, EPrivacy.follower];
-            }
+            let agg = [];
 
-            // run aggregation service
-            const agg = await services.post.getPosts(req.user, query, { skip, limit, sort: sortQuery });
+            if (config.db.type === 'postgres') {
+                // Use PostgreSQL services
+                const user = await services.user.getUserByUsername(username);
+                if (!user) return next(new ErrorHandler(404, 'User not found'));
+
+                const currentUserId = req.user['id'];
+                const isOwnProfile = username === req.user.username;
+                let isFollowing = false;
+                if (!isOwnProfile) {
+                    isFollowing = await services.follow.checkFollow(currentUserId, user.id);
+                }
+
+                const query: any = { author: user.id };
+                if (isOwnProfile) {
+                    query.privacyIn = [EPrivacy.public, EPrivacy.follower, EPrivacy.private];
+                } else if (isFollowing) {
+                    query.privacyIn = [EPrivacy.public, EPrivacy.follower];
+                } else {
+                    query.privacyIn = [EPrivacy.public];
+                }
+
+                agg = await services.post.getPosts(req.user, query, { skip, limit, sort: sortQuery });
+            } else {
+                // Use MongoDB
+                const user = await User.findOne({ username });
+                const myFollowingDoc = await Follow.find({ user: req.user._id });
+                const myFollowing = myFollowingDoc.map(user => user.target);
+
+                if (!user) return next(new ErrorHandler(404, 'User not found'));
+
+                const query = {
+                    _author_id: Types.ObjectId(user._id),
+                    privacy: { $in: [EPrivacy.public] },
+                };
+
+                if (username === req.user.username) {
+                    query.privacy.$in = [EPrivacy.public, EPrivacy.follower, EPrivacy.private];
+                } else if (myFollowing.includes(user._id.toString())) {
+                    query.privacy.$in = [EPrivacy.public, EPrivacy.follower];
+                }
+
+                agg = await services.post.getPosts(req.user, query, { skip, limit, sort: sortQuery });
+            }
 
             if (agg.length <= 0 && offset === 0) {
                 return next(new ErrorHandler(404, `${username} hasn't posted anything yet.`));
@@ -213,7 +239,24 @@ router.post(
                     state = true;
                     console.log('✅ LIKE DEBUG - Like created successfully');
 
-                    // TODO: Add notification logic for PostgreSQL
+                    // Notification logic for PostgreSQL
+                    const postAuthorId = post._author_id.toString();
+                    if (postAuthorId !== userId.toString()) {
+                        const io = req.app.get('io');
+                        const newNotif = {
+                            type: ENotificationType.like,
+                            initiator: userId,
+                            target: postAuthorId,
+                            link: `/post/${post_id}`
+                        };
+                        const notificationExists = await services.notification.findNotification(newNotif);
+                        if (!notificationExists) {
+                            const notif = await services.notification.createNotification(newNotif);
+                            io.to(postAuthorId).emit('newNotification', { notification: notif, count: 1 });
+                        } else {
+                            await services.notification.updateNotificationTimestamp(notificationExists.id);
+                        }
+                    }
                 } else {
                     console.log('➖ LIKE DEBUG - Removing existing like...');
                     await services.like.deleteLike(userId, post_id, 'Post');
@@ -306,32 +349,50 @@ router.patch(
         try {
             const { post_id } = req.params;
             const { description, privacy } = req.body;
-            const obj: IUpdate = { updatedAt: Date.now(), isEdited: true };
 
             if (!description && !privacy) return next(new ErrorHandler(400));
 
-            if (description) obj.description = filterWords.clean(description.trim());
-            if (privacy) obj.privacy = privacy;
+            if (config.db.type === 'postgres') {
+                const posts = await services.post.getPosts(req.user, { _id: post_id });
+                const post = posts[0];
+                if (!post) return next(new ErrorHandler(400, 'Post not found.'));
 
-            const post = await Post.findById(post_id);
-            if (!post) return next(new ErrorHandler(400));
+                const currentUserId = req.user['id'].toString();
+                if (currentUserId !== post._author_id.toString()) {
+                    return next(new ErrorHandler(401));
+                }
 
-            if (req.user._id.toString() === post._author_id.toString()) {
-                const updatedPost = await Post.findByIdAndUpdate(post_id, {
-                    $set: obj
-                }, {
-                    new: true
-                });
-                await updatedPost
-                    .populate({
-                        path: 'author',
-                        select: 'fullname username profilePicture'
-                    })
-                    .execPopulate();
+                const updateData: any = {};
+                if (description) updateData.description = filterWords.clean(description.trim());
+                if (privacy) updateData.privacy = privacy;
 
-                res.status(200).send(makeResponseJson({ ...updatedPost.toObject(), isOwnPost: true }));
+                const updatedPost = await services.post.updatePost(post_id, updateData);
+                res.status(200).send(makeResponseJson({ ...updatedPost, isOwnPost: true }));
             } else {
-                return next(new ErrorHandler(401));
+                const obj: IUpdate = { updatedAt: Date.now(), isEdited: true };
+                if (description) obj.description = filterWords.clean(description.trim());
+                if (privacy) obj.privacy = privacy;
+
+                const post = await Post.findById(post_id);
+                if (!post) return next(new ErrorHandler(400));
+
+                if (req.user._id.toString() === post._author_id.toString()) {
+                    const updatedPost = await Post.findByIdAndUpdate(post_id, {
+                        $set: obj
+                    }, {
+                        new: true
+                    });
+                    await updatedPost
+                        .populate({
+                            path: 'author',
+                            select: 'fullname username profilePicture'
+                        })
+                        .execPopulate();
+
+                    res.status(200).send(makeResponseJson({ ...updatedPost.toObject(), isOwnPost: true }));
+                } else {
+                    return next(new ErrorHandler(401));
+                }
             }
         } catch (e) {
             console.log('CANT EDIT POST :', e);
@@ -348,25 +409,44 @@ router.delete(
         try {
             const { post_id } = req.params;
 
-            const post = await Post.findById(post_id);
-            if (!post) return next(new ErrorHandler(400));
+            if (config.db.type === 'postgres') {
+                const posts = await services.post.getPosts(req.user, { _id: post_id });
+                const post = posts[0];
+                if (!post) return next(new ErrorHandler(400, 'Post not found.'));
 
-            if (req.user._id.toString() === post._author_id.toString()) {
-                const imageIDs = post.photos  // array of image public_ids
+                const currentUserId = req.user['id'].toString();
+                if (currentUserId !== post._author_id.toString()) {
+                    return next(new ErrorHandler(401));
+                }
+
+                const imageIDs = (post.photos || [])
                     .filter(img => img?.public_id)
                     .map(img => img.public_id);
 
+                if (imageIDs.length > 0) await deleteImageFromStorage(imageIDs);
 
-                if (post.photos && post.photos.length !== 0) await deleteImageFromStorage(imageIDs);
-
-                await Post.findByIdAndDelete(post_id);
-                await Comment.deleteMany({ _post_id: Types.ObjectId(post_id) });
-                await NewsFeed.deleteMany({ post: Types.ObjectId(post_id) });
-                await Bookmark.deleteMany({ _post_id: Types.ObjectId(post_id) });
-
+                await services.post.deletePost(post_id);
                 res.sendStatus(200);
             } else {
-                return next(new ErrorHandler(401));
+                const post = await Post.findById(post_id);
+                if (!post) return next(new ErrorHandler(400));
+
+                if (req.user._id.toString() === post._author_id.toString()) {
+                    const imageIDs = post.photos
+                        .filter(img => img?.public_id)
+                        .map(img => img.public_id);
+
+                    if (post.photos && post.photos.length !== 0) await deleteImageFromStorage(imageIDs);
+
+                    await Post.findByIdAndDelete(post_id);
+                    await Comment.deleteMany({ _post_id: Types.ObjectId(post_id) });
+                    await NewsFeed.deleteMany({ post: Types.ObjectId(post_id) });
+                    await Bookmark.deleteMany({ _post_id: Types.ObjectId(post_id) });
+
+                    res.sendStatus(200);
+                } else {
+                    return next(new ErrorHandler(401));
+                }
             }
         } catch (e) {
             console.log('CANT DELETE POST', e);
@@ -383,13 +463,18 @@ router.get(
         try {
             const { post_id } = req.params;
 
-            const agg = await services.post.getPosts(req.user, { _id: Types.ObjectId(post_id) });
+            const query = config.db.type === 'postgres'
+                ? { _id: post_id }
+                : { _id: Types.ObjectId(post_id) };
+
+            const agg = await services.post.getPosts(req.user, query);
 
             const post = agg[0] || {}
 
             if (!post) return next(new ErrorHandler(400, 'Post not found.'));
 
-            if (post?.privacy === 'private' && post._author_id?.toString() !== req.user._id.toString()) {
+            const currentUserId = config.db.type === 'postgres' ? req.user['id']?.toString() : req.user._id.toString();
+            if (post?.privacy === 'private' && post._author_id?.toString() !== currentUserId) {
                 return next(new ErrorHandler(401));
             }
 
@@ -412,41 +497,65 @@ router.get(
             const limit = LIKES_LIMIT;
             const skip = offset * limit;
 
-            const exist = await Post.findById(Types.ObjectId(post_id));
-            if (!exist) return next(new ErrorHandler(400, 'Post not found.'));
+            if (config.db.type === 'postgres') {
+                const posts = await services.post.getPosts(req.user, { _id: post_id });
+                const exist = posts[0];
+                if (!exist) return next(new ErrorHandler(400, 'Post not found.'));
 
-            const likers = await Like
-                .find({
-                    target: Types.ObjectId(post_id),
-                    type: 'Post'
-                })
-                .sort({ createdAt: -1 })
-                .skip(skip)
-                .limit(limit)
-                .populate({
-                    path: 'user',
-                    select: 'profilePicture username fullname'
-                })
-
-            if (likers.length === 0 && offset < 1) {
-                return next(new ErrorHandler(404, 'No likes found.'));
-            }
-
-            if (likers.length === 0 && offset > 0) {
-                return next(new ErrorHandler(404, 'No more likes found.'));
-            }
-
-            const myFollowingDoc = await Follow.find({ user: req.user._id });
-            const myFollowing = myFollowingDoc.map(user => user.target);
-
-            const result = likers.map((like) => {
-                return {
-                    ...like.user.toObject(),
-                    isFollowing: myFollowing.includes(like.user.id)
+                const likers = await services.like.getLikers(post_id, skip, limit);
+                if (likers.length === 0 && offset < 1) {
+                    return next(new ErrorHandler(404, 'No likes found.'));
                 }
-            });
+                if (likers.length === 0 && offset > 0) {
+                    return next(new ErrorHandler(404, 'No more likes found.'));
+                }
 
-            res.status(200).send(makeResponseJson(result));
+                const myFollowing = await services.follow.getFollowingIds(req.user['id']);
+                const result = likers.map((user) => {
+                    return {
+                        ...user,
+                        isFollowing: myFollowing.includes(user.id)
+                    }
+                });
+
+                res.status(200).send(makeResponseJson(result));
+            } else {
+                const exist = await Post.findById(Types.ObjectId(post_id));
+                if (!exist) return next(new ErrorHandler(400, 'Post not found.'));
+
+                const likers = await Like
+                    .find({
+                        target: Types.ObjectId(post_id),
+                        type: 'Post'
+                    })
+                    .sort({ createdAt: -1 })
+                    .skip(skip)
+                    .limit(limit)
+                    .populate({
+                        path: 'user',
+                        select: 'profilePicture username fullname'
+                    })
+
+                if (likers.length === 0 && offset < 1) {
+                    return next(new ErrorHandler(404, 'No likes found.'));
+                }
+
+                if (likers.length === 0 && offset > 0) {
+                    return next(new ErrorHandler(404, 'No more likes found.'));
+                }
+
+                const myFollowingDoc = await Follow.find({ user: req.user._id });
+                const myFollowing = myFollowingDoc.map(user => user.target);
+
+                const result = likers.map((like) => {
+                    return {
+                        ...like.user.toObject(),
+                        isFollowing: myFollowing.includes(like.user.id)
+                    }
+                });
+
+                res.status(200).send(makeResponseJson(result));
+            }
         } catch (e) {
             console.log('CANT GET POST LIKERS', e);
             next(e);

@@ -70,6 +70,32 @@ export const deleteLike = async (userId: string, targetId: string, type: string 
     }
 }
 
+export const getLikers = async (targetId: string, skip: number, limit: number): Promise<any[]> => {
+    try {
+        const likers = await sequelize.query(`
+            SELECT
+                u.id,
+                u.username,
+                u.firstname,
+                u.lastname,
+                u."profilePicture"
+            FROM "Likes" l
+            JOIN "Users" u ON l."user" = u.id
+            WHERE l.target = :targetId AND l.type = 'Post'
+            ORDER BY l."createdAt" DESC
+            OFFSET :skip
+            LIMIT :limit
+        `, {
+            replacements: { targetId: parseInt(targetId), skip, limit },
+            type: QueryTypes.SELECT
+        });
+        return likers as any[];
+    } catch (error) {
+        console.error("Error fetching likers:", error);
+        throw error;
+    }
+}
+
 export const getLikesCount = async (targetId: string, type: string = 'Post'): Promise<number> => {
     try {
         const targetIdInt = parseInt(targetId);

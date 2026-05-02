@@ -1,10 +1,12 @@
-import connectMongo from 'connect-mongo';
 import session from 'express-session';
-import mongoose from 'mongoose';
 import path from 'path';
 
-const MongoStore = connectMongo(session);
 const env = process.env.NODE_ENV || 'dev';
+
+// Load base .env first (contains shared credentials like OAuth keys)
+require('dotenv').config({
+  path: path.join(__dirname, '../../.env')
+});
 
 if (env === 'dev') {
   require('dotenv').config({
@@ -13,6 +15,14 @@ if (env === 'dev') {
 }
 
 const dbType = process.env.DB_TYPE || 'mongodb';
+
+// Only import MongoDB dependencies if using MongoDB
+let MongoStore;
+if (dbType === 'mongodb') {
+  const connectMongo = require('connect-mongo');
+  const mongoose = require('mongoose');
+  MongoStore = connectMongo(session);
+}
 
 export default {
   server: {
@@ -51,9 +61,9 @@ export default {
       httpOnly: env !== 'dev'
     }, //14 days expiration
     // Only use MongoStore if using MongoDB
-    ...(dbType === 'mongodb' && {
+    ...(dbType === 'mongodb' && MongoStore && {
       store: new MongoStore({
-        mongooseConnection: mongoose.connection,
+        mongooseConnection: require('mongoose').connection,
         collection: 'session'
       })
     })

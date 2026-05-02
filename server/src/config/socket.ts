@@ -1,5 +1,6 @@
 import config from '@/config/config';
 import User from '@/schemas/UserSchema';
+import UserPostgres from '@/models/User';
 import { Application } from "express";
 import { Server } from "http";
 
@@ -15,18 +16,23 @@ export default function (app: Application, server: Server) {
     app.set('io', io);
 
     io.on("connection", (socket: SocketIO.Socket) => {
-        socket.on("userConnect", (id) => {
-            User
-                .findById(id)
-                .then((user) => {
-                    if (user) {
-                        socket.join(user._id.toString());
-                        console.log('Client connected.');
-                    }
-                })
-                .catch((e) => {
-                    console.log('Invalid user ID, cannot join Socket.');
-                });
+        socket.on("userConnect", async (id) => {
+            try {
+                let user;
+                if (config.db.type === 'postgres') {
+                    user = await UserPostgres.findByPk(id);
+                } else {
+                    user = await User.findById(id);
+                }
+
+                if (user) {
+                    const userId = config.db.type === 'postgres' ? user.id : user._id.toString();
+                    socket.join(userId.toString());
+                    console.log('Client connected.');
+                }
+            } catch (e) {
+                console.log('Invalid user ID, cannot join Socket.');
+            }
         });
 
         socket.on("userDisconnect", (userID) => {

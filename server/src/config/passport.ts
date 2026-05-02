@@ -119,156 +119,233 @@ export default function (passport) {
         })
     );
 
-    // passport.use(
-    //     'facebook-auth',
-    //     new FacebookStrategy.Strategy({
-    //         clientID: process.env.FACEBOOK_CLIENT_ID,
-    //         clientSecret: process.env.FACEBOOK_CLIENT_SECRET,
-    //         callbackURL: `/api/v1/auth/facebook/callback`,
-    //         profileFields: ['id', 'profileUrl', 'email', 'displayName', 'name', 'gender', 'picture.type(large)']
-    //     }, async (accessToken, refreshToken, profile, done) => {
-    //         try {
-    //             const fbProfile = profile._json;
-    //             const user = await User.findOne({ provider_id: fbProfile.id });
+    passport.use(
+        'facebook-auth',
+        new FacebookStrategy.Strategy({
+            clientID: process.env.FACEBOOK_CLIENT_ID,
+            clientSecret: process.env.FACEBOOK_CLIENT_SECRET,
+            callbackURL: `/api/v1/auth/facebook/callback`,
+            profileFields: ['id', 'profileUrl', 'email', 'displayName', 'name', 'gender', 'picture.type(large)']
+        }, async (accessToken, refreshToken, profile, done) => {
+            try {
+                const fbProfile = profile._json;
+                const email = fbProfile.email || (profile.emails && profile.emails[0] && profile.emails[0].value);
+                const firstName = fbProfile.first_name || (profile.name && profile.name.givenName);
+                const lastName = fbProfile.last_name || (profile.name && profile.name.familyName);
+                const picture = fbProfile.picture ? fbProfile.picture.data.url : '';
 
-    //             if (user) {
-    //                 return done(null, user);
-    //             } else {
-    //                 const randomString = Math.random().toString(36).substring(2);
+                if (config.db.type === 'postgres') {
+                    let user = await UserPostgres.findOne({ where: { email } });
 
-    //                 const newUser = new User({
-    //                     username: fbProfile.email.split('@')[0],
-    //                     email: fbProfile.email,
-    //                     password: randomString,
-    //                     firstname: fbProfile.first_name,
-    //                     lastname: fbProfile.last_name,
-    //                     profilePicture: {
-    //                         url: fbProfile.picture ? fbProfile.picture.data.url : ''
-    //                     },
-    //                     provider_id: fbProfile.id,
-    //                     provider: 'facebook',
-    //                     provider_access_token: accessToken,
-    //                     provider_refresh_token: refreshToken
-    //                 });
+                    if (user) {
+                        return done(null, user);
+                    } else {
+                        const randomString = Math.random().toString(36).substring(2);
+                        const saltRounds = 10;
+                        const hashedPassword = await bcrypt.hash(randomString, saltRounds);
 
-    //                 newUser.save(function (err) {
-    //                     if (err) {
-    //                         done(null, false, err);  // handle errors!
-    //                     } else {
-    //                         console.log('SUCCESSFULL CREATED', newUser);
-    //                         done(null, newUser);
-    //                     }
-    //                 });
-    //             }
-    //         } catch (err) {
-    //             console.log(err);
-    //             return done(err);
-    //         }
-    //     }
-    //     )
-    // );
+                        const newUser = await UserPostgres.create({
+                            email,
+                            password: hashedPassword,
+                            username: email.split('@')[0].toLowerCase().replace(/[^a-z0-9_]/g, ''),
+                            firstname: firstName,
+                            lastname: lastName
+                        });
+                        return done(null, newUser);
+                    }
+                } else {
+                    const user = await User.findOne({ provider_id: fbProfile.id });
 
-    // passport.use(
-    //     'github-auth',
-    //     new GitHubStrategy.Strategy({
-    //         clientID: process.env.GITHUB_CLIENT_ID,
-    //         clientSecret: process.env.GITHUB_CLIENT_SECRET,
-    //         callbackURL: `/api/v1/auth/github/callback`,
-    //         scope: 'user:email'
-    //     }, async (accessToken, refreshToken, profile, done) => {
-    //         try {
-    //             const githubProfile: any = profile._json;
-    //             const user = await User.findOne({ provider_id: githubProfile.id });
+                    if (user) {
+                        return done(null, user);
+                    } else {
+                        const randomString = Math.random().toString(36).substring(2);
 
-    //             if (user) {
-    //                 return done(null, user);
-    //             } else {
-    //                 const randomString = Math.random().toString(36).substring(2);
+                        const newUser = new User({
+                            username: email.split('@')[0],
+                            email,
+                            password: randomString,
+                            firstname: firstName,
+                            lastname: lastName,
+                            profilePicture: {
+                                url: picture
+                            },
+                            provider_id: fbProfile.id,
+                            provider: 'facebook',
+                            provider_access_token: accessToken,
+                            provider_refresh_token: refreshToken
+                        });
 
-    //                 const newUser = new User({
-    //                     username: githubProfile.login,
-    //                     email: githubProfile.email,
-    //                     password: randomString,
-    //                     firstname: githubProfile.name.split(' ')[0],
-    //                     lastname: githubProfile.name.split(' ')[1],
-    //                     profilePicture: {
-    //                         url: githubProfile.avatar_url
-    //                     },
-    //                     provider_id: githubProfile.id,
-    //                     provider: 'github',
-    //                     'info.bio': githubProfile.bio,
-    //                     provider_access_token: accessToken,
-    //                     provider_refresh_token: refreshToken
-    //                 });
+                        newUser.save(function (err) {
+                            if (err) {
+                                done(null, false, err);
+                            } else {
+                                console.log('SUCCESSFULLY CREATED', newUser);
+                                done(null, newUser);
+                            }
+                        });
+                    }
+                }
+            } catch (err) {
+                console.log(err);
+                return done(err);
+            }
+        }
+        )
+    );
 
-    //                 newUser.save(function (err) {
-    //                     if (err) {
-    //                         console.log(err)
-    //                         done(null, false, err);  // handle errors!
-    //                     } else {
-    //                         console.log('SUCCESSFULL CREATED', newUser);
-    //                         done(null, newUser);
-    //                     }
-    //                 });
-    //             }
-    //         } catch (err) {
-    //             console.log(err);
-    //             return done(err);
-    //         }
-    //     }
-    //     )
-    // );
+    passport.use(
+        'github-auth',
+        new GitHubStrategy.Strategy({
+            clientID: process.env.GITHUB_CLIENT_ID,
+            clientSecret: process.env.GITHUB_CLIENT_SECRET,
+            callbackURL: `/api/v1/auth/github/callback`,
+            scope: 'user:email'
+        }, async (accessToken, refreshToken, profile, done) => {
+            try {
+                const githubProfile: any = profile._json;
+                const email = githubProfile.email || (profile.emails && profile.emails[0] && profile.emails[0].value);
+                const nameParts = githubProfile.name ? githubProfile.name.split(' ') : [];
+                const firstName = nameParts[0] || (profile.name && profile.name.givenName) || '';
+                const lastName = nameParts[1] || (profile.name && profile.name.familyName) || '';
+                const avatarUrl = githubProfile.avatar_url || (profile.photos && profile.photos[0] && profile.photos[0].value) || '';
 
-    // passport.use(
-    //     'google-auth',
-    //     new GoogleStrategy.Strategy(
-    //         {
-    //             clientID: process.env.GOOGLE_CLIENT_ID,
-    //             clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-    //             callbackURL: `/api/v1/auth/google/callback`
-    //         },
-    //         async (accessToken, refreshToken, profile, done) => {
-    //             try {
-    //                 console.log(profile)
-    //                 const user = await User.findOne({ provider_id: profile.id });
+                if (config.db.type === 'postgres') {
+                    let user = await UserPostgres.findOne({ where: { email } });
 
-    //                 console.log(profile)
+                    if (user) {
+                        return done(null, user);
+                    } else {
+                        const randomString = Math.random().toString(36).substring(2);
+                        const saltRounds = 10;
+                        const hashedPassword = await bcrypt.hash(randomString, saltRounds);
 
-    //                 if (user) {
-    //                     return done(null, user);
-    //                 } else {
-    //                     const randomString = Math.random().toString(36).substring(2);
-    //                     const randomNumber = Math.floor(Math.random() * 100);
-    //                     const photo = profile.picture ? { url: profile.picture } : {};
+                        const newUser = await UserPostgres.create({
+                            email,
+                            password: hashedPassword,
+                            username: githubProfile.login.toLowerCase().replace(/[^a-z0-9_]/g, ''),
+                            firstname: firstName,
+                            lastname: lastName
+                        });
+                        return done(null, newUser);
+                    }
+                } else {
+                    const user = await User.findOne({ provider_id: githubProfile.id });
 
-    //                     const newUser = new User({
-    //                         username: `${profile.given_name}_${profile.family_name}${randomNumber}`,
-    //                         email: profile.email,
-    //                         password: randomString,
-    //                         firstname: profile.given_name,
-    //                         lastname: profile.family_name,
-    //                         profilePicture: photo,
-    //                         provider_id: profile.id,
-    //                         provider: 'google',
-    //                         provider_access_token: accessToken,
-    //                         provider_refresh_token: refreshToken
-    //                     });
+                    if (user) {
+                        return done(null, user);
+                    } else {
+                        const randomString = Math.random().toString(36).substring(2);
 
-    //                     newUser.save(function (err) {
-    //                         if (err) {
-    //                                 done(null, false, err);
-    //                         } else {
-    //                             console.log('SUCCESSFULL CREATED', newUser);
-    //                             done(null, newUser);
-    //                         }
-    //                     });
-    //                 }
-    //             } catch (err) {
-    //                 console.log(err);
-    //                 return done(err);
-    //             }
-    //         }
-    //     )
-    // );
+                        const newUser = new User({
+                            username: githubProfile.login,
+                            email,
+                            password: randomString,
+                            firstname: firstName,
+                            lastname: lastName,
+                            profilePicture: {
+                                url: avatarUrl
+                            },
+                            provider_id: githubProfile.id,
+                            provider: 'github',
+                            provider_access_token: accessToken,
+                            provider_refresh_token: refreshToken
+                        });
+
+                        newUser.save(function (err) {
+                            if (err) {
+                                console.log(err);
+                                done(null, false, err);
+                            } else {
+                                console.log('SUCCESSFULLY CREATED', newUser);
+                                done(null, newUser);
+                            }
+                        });
+                    }
+                }
+            } catch (err) {
+                console.log(err);
+                return done(err);
+            }
+        }
+        )
+    );
+
+    passport.use(
+        'google-auth',
+        new GoogleStrategy.Strategy(
+            {
+                clientID: process.env.GOOGLE_CLIENT_ID,
+                clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+                callbackURL: `/api/v1/auth/google/callback`
+            },
+            async (accessToken, refreshToken, profile, done) => {
+                try {
+                    const json = profile._json;
+                    const email = json.email || (profile.emails && profile.emails[0] && profile.emails[0].value);
+                    const givenName = json.given_name || (profile.name && profile.name.givenName);
+                    const familyName = json.family_name || (profile.name && profile.name.familyName);
+                    const picture = json.picture || (profile.photos && profile.photos[0] && profile.photos[0].value);
+
+                    if (config.db.type === 'postgres') {
+                        let user = await UserPostgres.findOne({ where: { email } });
+
+                        if (user) {
+                            return done(null, user);
+                        } else {
+                            const randomString = Math.random().toString(36).substring(2);
+                            const randomNumber = Math.floor(Math.random() * 100);
+                            const saltRounds = 10;
+                            const hashedPassword = await bcrypt.hash(randomString, saltRounds);
+
+                            const newUser = await UserPostgres.create({
+                                email,
+                                password: hashedPassword,
+                                username: `${givenName}_${familyName}${randomNumber}`.toLowerCase().replace(/[^a-z0-9_]/g, ''),
+                                firstname: givenName,
+                                lastname: familyName
+                            });
+                            return done(null, newUser);
+                        }
+                    } else {
+                        const user = await User.findOne({ provider_id: profile.id });
+
+                        if (user) {
+                            return done(null, user);
+                        } else {
+                            const randomString = Math.random().toString(36).substring(2);
+                            const randomNumber = Math.floor(Math.random() * 100);
+                            const photo = picture ? { url: picture } : {};
+
+                            const newUser = new User({
+                                username: `${givenName}_${familyName}${randomNumber}`,
+                                email,
+                                password: randomString,
+                                firstname: givenName,
+                                lastname: familyName,
+                                profilePicture: photo,
+                                provider_id: profile.id,
+                                provider: 'google',
+                                provider_access_token: accessToken,
+                                provider_refresh_token: refreshToken
+                            });
+
+                            newUser.save(function (err) {
+                                if (err) {
+                                    done(null, false, err);
+                                } else {
+                                    console.log('SUCCESSFULLY CREATED', newUser);
+                                    done(null, newUser);
+                                }
+                            });
+                        }
+                    }
+                } catch (err) {
+                    console.log(err);
+                    return done(err);
+                }
+            }
+        )
+    );
 
 };

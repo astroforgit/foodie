@@ -3,6 +3,7 @@ import { ErrorHandler } from '@/middlewares';
 import { Follow, User } from '@/schemas';
 import { EPrivacy } from '@/schemas/PostSchema';
 import services from '@/services';
+import config from '@/config/config';
 import { NextFunction, Request, Response, Router } from 'express';
 
 const router = Router({ mergeParams: true });
@@ -21,8 +22,22 @@ router.get(
             let result = [];
 
             if (type === 'posts') {
-                const posts = await services.post
-                    .getPosts(
+                let posts;
+                if (config.db.type === 'postgres') {
+                    posts = await services.post.getPosts(
+                        req.user,
+                        {
+                            descriptionSearch: q as string,
+                            privacy: EPrivacy.public
+                        },
+                        {
+                            sort: { createdAt: -1 },
+                            skip,
+                            limit
+                        }
+                    );
+                } else {
+                    posts = await services.post.getPosts(
                         req.user,
                         {
                             description: {
@@ -37,40 +52,63 @@ router.get(
                             limit
                         }
                     );
+                }
 
                 if (posts.length === 0) {
                     return next(new ErrorHandler(404, 'No posts found.'));
                 }
 
                 result = posts;
-                // console.log(posts);
             } else {
-                const users = await User
-                    .find({
-                        $or: [
-                            { firstname: { $regex: q, $options: 'i' } },
-                            { lastname: { $regex: q, $options: 'i' } },
-                            { username: { $regex: q, $options: 'i' } }
-                        ]
-                    })
-                    .limit(limit)
-                    .skip(skip);
-
-                if (users.length === 0) {
-                    return next(new ErrorHandler(404, 'No users found.'));
-                }
-
-                const myFollowingDoc = await Follow.find({ user: req.user?._id });
-                const myFollowing = myFollowingDoc.map(user => user.target);
-
-                const usersResult = users.map((user) => {
-                    return {
-                        ...user.toProfileJSON(),
-                        isFollowing: myFollowing.includes(user.id)
+                if (config.db.type === 'postgres') {
+                    const users = await services.user.searchUsers(q as string, skip, limit);
+                    if (users.length === 0) {
+                        return next(new ErrorHandler(404, 'No users found.'));
                     }
-                });
 
-                result = usersResult;
+                    const currentUserId = req.user ? req.user['id'] : null;
+                    let myFollowing: number[] = [];
+                    if (currentUserId) {
+                        myFollowing = await services.follow.getFollowingIds(currentUserId);
+                    }
+
+                    result = users.map((user) => {
+                        return {
+                            id: user.id,
+                            username: user.username,
+                            email: user.email,
+                            firstname: user.firstname,
+                            lastname: user.lastname,
+                            fullname: user.firstname && user.lastname ? `${user.firstname} ${user.lastname}` : null,
+                            isFollowing: myFollowing.includes(user.id)
+                        };
+                    });
+                } else {
+                    const users = await User
+                        .find({
+                            $or: [
+                                { firstname: { $regex: q, $options: 'i' } },
+                                { lastname: { $regex: q, $options: 'i' } },
+                                { username: { $regex: q, $options: 'i' } }
+                            ]
+                        })
+                        .limit(limit)
+                        .skip(skip);
+
+                    if (users.length === 0) {
+                        return next(new ErrorHandler(404, 'No users found.'));
+                    }
+
+                    const myFollowingDoc = await Follow.find({ user: req.user?._id });
+                    const myFollowing = myFollowingDoc.map(user => user.target);
+
+                    result = users.map((user) => {
+                        return {
+                            ...user.toProfileJSON(),
+                            isFollowing: myFollowing.includes(user.id)
+                        }
+                    });
+                }
             }
 
             res.status(200).send(makeResponseJson(result));

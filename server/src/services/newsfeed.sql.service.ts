@@ -148,6 +148,51 @@ export const populateNewsFeed = async (postId: number, authorId: number): Promis
     }
 };
 
+export const subscribeToUserFeed = async (followerId: string, authorId: string, limit: number = 10): Promise<void> => {
+    try {
+        const posts = await sequelize.query(`
+            SELECT id, "_author_id", "createdAt"
+            FROM "Posts"
+            WHERE "_author_id" = :authorId
+            ORDER BY "createdAt" DESC
+            LIMIT :limit
+        `, {
+            replacements: { authorId: parseInt(authorId), limit },
+            type: QueryTypes.SELECT
+        });
+
+        if ((posts as any[]).length === 0) return;
+
+        const values = (posts as any[]).map(post =>
+            `(${parseInt(followerId)}, ${post.id}, ${post._author_id}, NOW(), NOW())`
+        ).join(',');
+
+        await sequelize.query(`
+            INSERT INTO "NewsFeeds" (follower, post, post_owner, "createdAt", "updatedAt")
+            VALUES ${values}
+            ON CONFLICT DO NOTHING
+        `);
+    } catch (error) {
+        console.error("Error subscribing to user feed:", error);
+        throw error;
+    }
+}
+
+export const unsubscribeFromUserFeed = async (followerId: string, authorId: string): Promise<void> => {
+    try {
+        await sequelize.query(`
+            DELETE FROM "NewsFeeds"
+            WHERE follower = :followerId AND post_owner = :authorId
+        `, {
+            replacements: { followerId: parseInt(followerId), authorId: parseInt(authorId) },
+            type: QueryTypes.DELETE
+        });
+    } catch (error) {
+        console.error("Error unsubscribing from user feed:", error);
+        throw error;
+    }
+}
+
 export const populateNewsFeedForExistingPosts = async (): Promise<void> => {
     console.log('📰 NEWSFEED SQL DEBUG - populateNewsFeedForExistingPosts called');
 

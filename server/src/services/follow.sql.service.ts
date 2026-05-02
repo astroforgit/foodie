@@ -84,6 +84,21 @@ export const getFollowing = async (
     return getFollow(query, 'following', user, skip, limit);
 }
 
+export const getFollowingIds = async (userId: string): Promise<number[]> => {
+    try {
+        const result = await sequelize.query(`
+            SELECT following FROM "Follows" WHERE follower = :userId
+        `, {
+            replacements: { userId },
+            type: QueryTypes.SELECT
+        });
+        return result.map((row: any) => row.following);
+    } catch (error) {
+        console.error("Error getting following IDs:", error);
+        throw error;
+    }
+}
+
 export const checkFollow = async (userId: string, targetId: string): Promise<boolean> => {
     try {
         const result = await sequelize.query(`
@@ -127,6 +142,32 @@ export const deleteFollow = async (userId: string, targetId: string) => {
     }
 }
 
+export const getFollowCounts = async (userId: string): Promise<{ followersCount: number; followingCount: number }> => {
+    try {
+        const followersResult = await sequelize.query(`
+            SELECT COUNT(*) as count FROM "Follows" WHERE following = :userId
+        `, {
+            replacements: { userId },
+            type: QueryTypes.SELECT
+        });
+
+        const followingResult = await sequelize.query(`
+            SELECT COUNT(*) as count FROM "Follows" WHERE follower = :userId
+        `, {
+            replacements: { userId },
+            type: QueryTypes.SELECT
+        });
+
+        return {
+            followersCount: parseInt((followersResult[0] as any).count),
+            followingCount: parseInt((followingResult[0] as any).count)
+        };
+    } catch (error) {
+        console.error("Error fetching follow counts:", error);
+        throw error;
+    }
+}
+
 export const getSuggestedPeople = async (userId: string, skip: number, limit: number): Promise<any[]> => {
     try {
         // Get users that the current user is following
@@ -140,7 +181,7 @@ export const getSuggestedPeople = async (userId: string, skip: number, limit: nu
 
         // Build exclusion list (people I follow + myself)
         const excludeIds = [...myFollowing, userId];
-        const excludeIdsStr = excludeIds.map(id => `'${id}'`).join(',');
+        const excludeIdsStr = excludeIds.map(id => `${id}`).join(',');
 
         const results = await sequelize.query(`
             SELECT

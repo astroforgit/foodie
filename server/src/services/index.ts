@@ -11,6 +11,7 @@ import * as notificationSql from './notification.sql.service';
 import * as messageSql from './message.sql.service';
 import * as likeSql from './like.sql.service';
 import * as commentSql from './comment.sql.service';
+import * as bookmarkSql from './bookmark.sql.service';
 
 const newsfeedService = {
     mongodb: newsfeedMongo,
@@ -47,6 +48,10 @@ const commentService = {
     postgres: commentSql
 }
 
+const bookmarkService = {
+    postgres: bookmarkSql
+}
+
 export default {
     newsfeed: newsfeedService[config.db.type],
     follow: followService[config.db.type],
@@ -55,5 +60,6 @@ export default {
     notification: notificationService[config.db.type],
     message: messageService[config.db.type],
     like: likeService[config.db.type],
-    comment: commentService[config.db.type]
+    comment: commentService[config.db.type],
+    bookmark: bookmarkService[config.db.type]
 };

@@ -8,9 +8,9 @@ export const createComment = async (authorId: string, postId: string, content: s
     }
 }
 
-export const getCommentsByPostId = async (postId: string, skip: number, limit: number) => {
+export const getCommentsByPostId = async (postId: string, skip: number, limit: number, userId?: string, postAuthorId?: string) => {
     try {
-        return await getCommentsByPostIdSql(postId, skip, limit);
+        return await getCommentsByPostIdSql(postId, skip, limit, userId, postAuthorId);
     } catch (error) {
         throw error;
     }

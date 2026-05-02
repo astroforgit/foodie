@@ -52,43 +52,56 @@ router.post(
 
             // TODO ---- FILTER OUT DUPLICATES
             const io = req.app.get('io');
-            const notification = new Notification({
-                type: 'follow',
-                initiator: req.user._id,
-                target: Types.ObjectId(follow_id),
-                link: `/user/${req.user.username}`,
-                createdAt: Date.now()
-            });
 
-            notification
-                .save()
-                .then(async (doc) => {
-                    await doc
-                        .populate({
-                            path: 'target initiator',
-                            select: 'fullname profilePicture username'
-                        }).execPopulate();
+            if (config.db.type === 'postgres') {
+                const notif = await services.notification.createNotification({
+                    type: 'follow',
+                    initiator: currentUserId,
+                    target: follow_id,
+                    link: `/user/${req.user.username}`
+                });
+                io.to(follow_id).emit('newNotification', { notification: notif, count: 1 });
 
-                    io.to(follow_id).emit('newNotification', { notification: doc, count: 1 });
+                await services.newsfeed.subscribeToUserFeed(currentUserId, follow_id);
+            } else {
+                const notification = new Notification({
+                    type: 'follow',
+                    initiator: req.user._id,
+                    target: Types.ObjectId(follow_id),
+                    link: `/user/${req.user.username}`,
+                    createdAt: Date.now()
                 });
 
-            // SUBSCRIBE TO USER'S FEED
-            const subscribeToUserFeed = await Post
-                .find({ _author_id: Types.ObjectId(follow_id) })
-                .sort({ createdAt: -1 })
-                .limit(10);
+                notification
+                    .save()
+                    .then(async (doc) => {
+                        await doc
+                            .populate({
+                                path: 'target initiator',
+                                select: 'fullname profilePicture username'
+                            }).execPopulate();
 
-            if (subscribeToUserFeed.length !== 0) {
-                const feeds = subscribeToUserFeed.map((post) => {
-                    return {
-                        follower: req.user._id,
-                        post: post._id,
-                        post_owner: post._author_id,
-                        createdAt: post.createdAt
-                    }
-                });
+                        io.to(follow_id).emit('newNotification', { notification: doc, count: 1 });
+                    });
 
-                await NewsFeed.insertMany(feeds);
+                // SUBSCRIBE TO USER'S FEED
+                const subscribeToUserFeed = await Post
+                    .find({ _author_id: Types.ObjectId(follow_id) })
+                    .sort({ createdAt: -1 })
+                    .limit(10);
+
+                if (subscribeToUserFeed.length !== 0) {
+                    const feeds = subscribeToUserFeed.map((post) => {
+                        return {
+                            follower: req.user._id,
+                            post: post._id,
+                            post_owner: post._author_id,
+                            createdAt: post.createdAt
+                        }
+                    });
+
+                    await NewsFeed.insertMany(feeds);
+                }
             }
             res.status(200).send(makeResponseJson({ state: true }));
         } catch (e) {
@@ -122,11 +135,15 @@ router.post(
             }
 
             // UNSUBSCRIBE TO PERSON'S FEED
-            await NewsFeed
-                .deleteMany({
-                    post_owner: Types.ObjectId(follow_id),
-                    follower: req.user._id
-                })
+            if (config.db.type === 'postgres') {
+                await services.newsfeed.unsubscribeFromUserFeed(currentUserId, follow_id);
+            } else {
+                await NewsFeed
+                    .deleteMany({
+                        post_owner: Types.ObjectId(follow_id),
+                        follower: req.user._id
+                    })
+            }
 
             res.status(200).send(makeResponseJson({ state: false }));
         } catch (e) {

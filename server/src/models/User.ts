@@ -47,6 +47,21 @@ User.init({
     },
     lastname: {
         type: DataTypes.STRING
+    },
+    info: {
+        type: DataTypes.JSONB,
+        allowNull: true,
+        defaultValue: {}
+    },
+    profilePicture: {
+        type: DataTypes.JSONB,
+        allowNull: true,
+        defaultValue: {}
+    },
+    coverPhoto: {
+        type: DataTypes.JSONB,
+        allowNull: true,
+        defaultValue: {}
     }
 }, {
     sequelize,

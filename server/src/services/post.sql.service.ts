@@ -52,9 +52,10 @@ export const getPosts = async (user: IUser | null, query: any, paginate?: Partia
         }
 
         if (query.author) {
+            const authorIdInt = parseInt(query.author);
             whereClause += ' AND p."_author_id" = :authorId';
-            replacements.authorId = query.author;
-            console.log('👤 POST SQL DEBUG - author filter:', query.author);
+            replacements.authorId = authorIdInt;
+            console.log('👤 POST SQL DEBUG - author filter:', query.author, '→', authorIdInt);
         }
 
         if (query._id) {
@@ -68,6 +69,21 @@ export const getPosts = async (user: IUser | null, query: any, paginate?: Partia
             whereClause += ' AND p.privacy = :privacy';
             replacements.privacy = query.privacy;
             console.log('🔒 POST SQL DEBUG - privacy filter:', query.privacy);
+        }
+
+        if (query.privacyIn && Array.isArray(query.privacyIn)) {
+            const placeholders = query.privacyIn.map((_, idx) => `:privacy${idx}`).join(', ');
+            whereClause += ` AND p.privacy IN (${placeholders})`;
+            query.privacyIn.forEach((priv, idx) => {
+                replacements[`privacy${idx}`] = priv;
+            });
+            console.log('🔒 POST SQL DEBUG - privacy IN filter:', query.privacyIn);
+        }
+
+        if (query.descriptionSearch) {
+            whereClause += ` AND p.description ILIKE :descSearch`;
+            replacements.descSearch = `%${query.descriptionSearch}%`;
+            console.log('🔍 POST SQL DEBUG - description search:', query.descriptionSearch);
         }
 
         if (query.isSaved && userId) {
@@ -87,6 +103,7 @@ export const getPosts = async (user: IUser | null, query: any, paginate?: Partia
                 p."isEdited",
                 p."createdAt",
                 p."updatedAt",
+                p."_author_id",
                 json_build_object(
                     'id', u.id,
                     'email', u.email,
@@ -124,38 +141,38 @@ export const getPosts = async (user: IUser | null, query: any, paginate?: Partia
 
 export const getPostById = async (postId: string, user: IUser | null): Promise<any> => {
     try {
-        const [post] = await sequelize.query(`
+        const posts = await sequelize.query(`
             SELECT
                 p.id,
                 p.privacy,
                 p.photos,
                 p.description,
-                p.is_edited as "isEdited",
-                p.created_at as "createdAt",
-                p.updated_at as "updatedAt",
+                p."isEdited",
+                p."createdAt",
+                p."updatedAt",
                 json_build_object(
                     'id', u.id,
                     'email', u.email,
-                    'profilePicture', u.profile_picture,
+                    'profilePicture', u."profilePicture",
                     'username', u.username
                 ) as author,
-                EXISTS(SELECT 1 FROM likes l WHERE l.post_id = p.id AND l.user_id = :userId) as "isLiked",
-                (p.author_id = :userId) as "isOwnPost",
-                EXISTS(SELECT 1 FROM bookmarks b WHERE b.post_id = p.id AND b.user_id = :userId) as "isBookmarked",
-                (SELECT COUNT(*) FROM comments c WHERE c.post_id = p.id) as "commentsCount",
-                (SELECT COUNT(*) FROM likes l WHERE l.post_id = p.id) as "likesCount"
+                EXISTS(SELECT 1 FROM "Likes" l WHERE l.target = p.id AND l."user" = :userId AND l.type = 'Post') as "isLiked",
+                (p."_author_id" = :userId) as "isOwnPost",
+                EXISTS(SELECT 1 FROM "Bookmarks" b WHERE b.post_id = p.id AND b.user_id = :userId) as "isBookmarked",
+                COALESCE((SELECT COUNT(*) FROM "Comments" c WHERE c."_post_id" = p.id), 0) as "commentsCount",
+                COALESCE((SELECT COUNT(*) FROM "Likes" l WHERE l.target = p.id AND l.type = 'Post'), 0) as "likesCount"
             FROM
-                posts p
+                "Posts" p
             JOIN
-                users u ON p.author_id = u.id
+                "Users" u ON p."_author_id" = u.id
             WHERE
                 p.id = :postId
         `, {
-            replacements: { postId, userId: user?._id },
+            replacements: { postId: parseInt(postId), userId: user ? (user['_id'] || user['id']) : null },
             type: QueryTypes.SELECT
         });
 
-        return (post as any[])[0];
+        return posts[0];
     } catch (error) {
         console.error("Error fetching post by id:", error);
         throw error;
@@ -170,7 +187,7 @@ export const createPost = async (authorId: string, data: any): Promise<any> => {
             VALUES (:authorId, :description, :photos, :privacy, NOW(), NOW())
             RETURNING *
         `, {
-            replacements: { authorId, description, photos: JSON.stringify(photos), privacy },
+            replacements: { authorId: parseInt(authorId), description, photos: JSON.stringify(photos), privacy },
             type: QueryTypes.INSERT
         });
 
@@ -184,22 +201,29 @@ export const createPost = async (authorId: string, data: any): Promise<any> => {
 export const updatePost = async (postId: string, data: any): Promise<any> => {
     try {
         const { description, privacy } = data;
-        const [post] = await sequelize.query(`
-            UPDATE posts
-            SET
-                description = :description,
-                privacy = :privacy,
-                is_edited = TRUE,
-                updated_at = NOW()
-            WHERE
-                id = :postId
+        const setFields: string[] = ['"isEdited" = true', '"updatedAt" = NOW()'];
+        const replacements: any = { postId: parseInt(postId) };
+
+        if (description !== undefined) {
+            setFields.push('description = :description');
+            replacements.description = description;
+        }
+        if (privacy !== undefined) {
+            setFields.push('privacy = :privacy');
+            replacements.privacy = privacy;
+        }
+
+        const result = await sequelize.query(`
+            UPDATE "Posts"
+            SET ${setFields.join(', ')}
+            WHERE id = :postId
             RETURNING *
         `, {
-            replacements: { postId, description, privacy },
+            replacements,
             type: QueryTypes.UPDATE
         });
 
-        return (post as any)[0];
+        return (result as any)[0][0];
     } catch (error) {
         console.error("Error updating post:", error);
         throw error;
@@ -209,9 +233,9 @@ export const updatePost = async (postId: string, data: any): Promise<any> => {
 export const deletePost = async (postId: string): Promise<any> => {
     try {
         await sequelize.query(`
-            DELETE FROM posts WHERE id = :postId
+            DELETE FROM "Posts" WHERE id = :postId
         `, {
-            replacements: { postId },
+            replacements: { postId: parseInt(postId) },
             type: QueryTypes.DELETE
         });
     } catch (error) {

@@ -12,8 +12,9 @@ interface IProps {
 const PublicRoute: React.FC<IProps> = ({ isAuth, component: Component, path, ...rest }) => {
     return (
         <Route
+            path={path}
             {...rest}
-            component={(props: any) => {
+            render={(props: any) => {
                 return isAuth ? <Redirect to={HOME} /> : <Component {...props} />
             }}
         />
